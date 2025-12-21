@@ -198,7 +198,11 @@ std::unique_ptr<Configuration> getPrimaryConfiguration() {
     static const Configuration configuration = []() {
         const std::vector<AudioProfile> standardPcmAudioProfiles = {
                 createProfile(PcmType::INT_16_BIT,
-                              {AudioChannelLayout::LAYOUT_MONO, AudioChannelLayout::LAYOUT_STEREO},
+                              {
+                                AudioChannelLayout::LAYOUT_MONO,
+                                AudioChannelLayout::LAYOUT_STEREO,
+                                AudioChannelLayout::LAYOUT_5POINT1,
+                        },
                               {8000, 11025, 16000, 32000, 44100, 48000})};
         Configuration c;
 
@@ -410,13 +414,23 @@ std::unique_ptr<Configuration> getUsbConfiguration() {
     static const Configuration configuration = []() {
         const std::vector<AudioProfile> standardPcmAudioProfiles = {
                 createProfile(PcmType::INT_16_BIT,
-                              {AudioChannelLayout::LAYOUT_MONO, AudioChannelLayout::LAYOUT_STEREO,
-                               AudioChannelLayout::INDEX_MASK_1, AudioChannelLayout::INDEX_MASK_2},
-                              {44100, 48000}),
+                              {
+                                AudioChannelLayout::LAYOUT_MONO,
+                                AudioChannelLayout::LAYOUT_STEREO,
+                                AudioChannelLayout::LAYOUT_5POINT1,
+                                AudioChannelLayout::INDEX_MASK_1,
+                                AudioChannelLayout::INDEX_MASK_2
+                        },
+                        {44100, 48000}),
                 createProfile(PcmType::INT_24_BIT,
-                              {AudioChannelLayout::LAYOUT_MONO, AudioChannelLayout::LAYOUT_STEREO,
-                               AudioChannelLayout::INDEX_MASK_1, AudioChannelLayout::INDEX_MASK_2},
-                              {44100, 48000})};
+                              {
+                                AudioChannelLayout::LAYOUT_MONO,
+                                AudioChannelLayout::LAYOUT_STEREO,
+                                AudioChannelLayout::LAYOUT_5POINT1,
+                                AudioChannelLayout::INDEX_MASK_1,
+                                AudioChannelLayout::INDEX_MASK_2
+                        },
+                        {44100, 48000})};
         Configuration c;
 
         // Device ports
