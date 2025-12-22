@@ -16,6 +16,8 @@
 
 #include <vector>
 
+#include <android/binder_parcelable_utils.h>
+
 #define LOG_TAG "AHAL_ModulePrimary"
 #include <Utils.h>
 #include <android-base/logging.h>
@@ -26,6 +28,9 @@
 #include "core-impl/StreamOffloadStub.h"
 #include "core-impl/StreamPrimary.h"
 #include "core-impl/Telephony.h"
+
+using aidl::android::media::audio::common::Boolean;
+using aidl::android::media::audio::common::Float;
 
 using aidl::android::hardware::audio::common::areAllBitPositionFlagsSet;
 using aidl::android::hardware::audio::common::hasMmapFlag;
@@ -43,10 +48,106 @@ using aidl::android::media::audio::common::MicrophoneInfo;
 
 namespace aidl::android::hardware::audio::core {
 
+namespace {
+
+// Accepted vendor parameter ids (module-level).
+// Values are floats in range [-1.0, +1.0].
+const std::string kCarBalanceId = "car.balance";
+const std::string kCarFaderId = "car.fader";
+// Legacy aliases (keep for compatibility with earlier experiments).
+const std::string kCarBalanceIdLegacy = "car_balance";
+const std::string kCarFaderIdLegacy = "car_fader";
+
+template <typename W>
+bool extractParameter(const VendorParameter& p, decltype(W::value)* v) {
+    std::optional<W> value;
+    binder_status_t result = p.ext.getParcelable(&value);
+    if (result == STATUS_OK && value.has_value()) {
+        *v = value.value().value;
+        return true;
+    }
+    LOG(ERROR) << __func__ << ": failed to read the value of the parameter \"" << p.id
+               << "\": " << result;
+    return false;
+}
+
+}  // namespace
+
 ModulePrimary::ModulePrimary(std::unique_ptr<Configuration>&& config)
     : Module(Type::DEFAULT, std::move(config)) {
     // Force PrimaryMixer initialization to apply mixer controls at boot
     (void)primary::PrimaryMixer::getInstance();
+}
+
+ndk::ScopedAStatus ModulePrimary::getVendorParameters(const std::vector<std::string>& in_ids,
+                                                      std::vector<VendorParameter>* _aidl_return) {
+    LOG(VERBOSE) << __func__ << ": " << mType << ": id count: " << in_ids.size();
+    bool allParametersKnown = true;
+    for (const auto& id : in_ids) {
+        if (id == kCarBalanceId || id == kCarBalanceIdLegacy) {
+            VendorParameter p{.id = id};
+            p.ext.setParcelable(Float{primary::PrimaryMixer::getBalance()});
+            _aidl_return->push_back(std::move(p));
+        } else if (id == kCarFaderId || id == kCarFaderIdLegacy) {
+            VendorParameter p{.id = id};
+            p.ext.setParcelable(Float{primary::PrimaryMixer::getFader()});
+            _aidl_return->push_back(std::move(p));
+        } else if (id == VendorDebug::kForceTransientBurstName) {
+            VendorParameter p{.id = id};
+            p.ext.setParcelable(Boolean{mVendorDebug.forceTransientBurst});
+            _aidl_return->push_back(std::move(p));
+        } else if (id == VendorDebug::kForceSynchronousDrainName) {
+            VendorParameter p{.id = id};
+            p.ext.setParcelable(Boolean{mVendorDebug.forceSynchronousDrain});
+            _aidl_return->push_back(std::move(p));
+        } else if (id == kClipTransitionSupportName) {
+            VendorParameter p{.id = id};
+            p.ext.setParcelable(Boolean{true});
+            _aidl_return->push_back(std::move(p));
+        } else {
+            allParametersKnown = false;
+            LOG(VERBOSE) << __func__ << ": " << mType << ": unrecognized parameter \"" << id
+                         << "\"";
+        }
+    }
+    if (allParametersKnown) return ndk::ScopedAStatus::ok();
+    return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+}
+
+ndk::ScopedAStatus ModulePrimary::setVendorParameters(
+        const std::vector<VendorParameter>& in_parameters, bool in_async) {
+    LOG(VERBOSE) << __func__ << ": " << mType << ": parameter count " << in_parameters.size()
+                 << ", async: " << in_async;
+    bool allParametersKnown = true;
+    for (const auto& p : in_parameters) {
+        if (p.id == kCarBalanceId || p.id == kCarBalanceIdLegacy) {
+            float v = 0.0f;
+            if (!extractParameter<Float>(p, &v)) {
+                return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+            }
+            primary::PrimaryMixer::setBalance(v);
+        } else if (p.id == kCarFaderId || p.id == kCarFaderIdLegacy) {
+            float v = 0.0f;
+            if (!extractParameter<Float>(p, &v)) {
+                return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+            }
+            primary::PrimaryMixer::setFader(v);
+        } else if (p.id == VendorDebug::kForceTransientBurstName) {
+            if (!extractParameter<Boolean>(p, &mVendorDebug.forceTransientBurst)) {
+                return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+            }
+        } else if (p.id == VendorDebug::kForceSynchronousDrainName) {
+            if (!extractParameter<Boolean>(p, &mVendorDebug.forceSynchronousDrain)) {
+                return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+            }
+        } else {
+            allParametersKnown = false;
+            LOG(VERBOSE) << __func__ << ": " << mType << ": unrecognized parameter \"" << p.id
+                         << "\"";
+        }
+    }
+    if (allParametersKnown) return ndk::ScopedAStatus::ok();
+    return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
 }
 
 ndk::ScopedAStatus ModulePrimary::getTelephony(std::shared_ptr<ITelephony>* _aidl_return) {

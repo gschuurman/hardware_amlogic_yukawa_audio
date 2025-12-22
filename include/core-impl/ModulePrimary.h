@@ -24,6 +24,11 @@ class ModulePrimary final : public Module {
   public:
     ModulePrimary(std::unique_ptr<Configuration>&& config);
 
+    ndk::ScopedAStatus getVendorParameters(const std::vector<std::string>& in_ids,
+                                           std::vector<VendorParameter>* _aidl_return) override;
+    ndk::ScopedAStatus setVendorParameters(const std::vector<VendorParameter>& in_parameters,
+                                           bool in_async) override;
+
   protected:
     ndk::ScopedAStatus getTelephony(std::shared_ptr<ITelephony>* _aidl_return) override;
 

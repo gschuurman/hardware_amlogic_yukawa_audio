@@ -16,6 +16,10 @@
 
 #define LOG_TAG "AHAL_StreamPrimary"
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
+#include <type_traits>
 #include <cstdio>
 
 #include <android-base/logging.h>
@@ -38,6 +42,115 @@ using aidl::android::media::audio::common::MicrophoneInfo;
 using android::base::GetBoolProperty;
 
 namespace aidl::android::hardware::audio::core {
+
+namespace {
+
+struct CarGains {
+    float fl = 1.0f;
+    float fr = 1.0f;
+    float fc = 1.0f;
+    float lfe = 1.0f;
+    float rl = 1.0f;
+    float rr = 1.0f;
+    float sl = 1.0f;
+    float sr = 1.0f;
+};
+
+inline CarGains computeCarGains(float balance, float fader) {
+    balance = std::clamp(balance, -1.0f, 1.0f);
+    fader = std::clamp(fader, -1.0f, 1.0f);
+
+    const float left = (balance <= 0.0f) ? 1.0f : (1.0f - balance);
+    const float right = (balance >= 0.0f) ? 1.0f : (1.0f + balance);
+
+    const float front = (fader >= 0.0f) ? 1.0f : (1.0f + fader);
+    const float rear = (fader <= 0.0f) ? 1.0f : (1.0f - fader);
+
+    CarGains g;
+    g.fl = left * front;
+    g.fr = right * front;
+    g.rl = left * rear;
+    g.rr = right * rear;
+    // Center is typically treated as "front" content.
+    g.fc = front;
+    // LFE typically left untouched by balance/fader.
+    g.lfe = 1.0f;
+    // Side channels (7.1) are treated as "rear" in a car cabin.
+    g.sl = left * rear;
+    g.sr = right * rear;
+    return g;
+}
+
+template <typename T>
+inline T clampCast(float v) {
+    if constexpr (std::is_floating_point_v<T>) {
+        return static_cast<T>(v);
+    } else {
+        const float lo = static_cast<float>(std::numeric_limits<T>::min());
+        const float hi = static_cast<float>(std::numeric_limits<T>::max());
+        return static_cast<T>(std::clamp(v, lo, hi));
+    }
+}
+
+template <typename Sample>
+void applyCarBalanceFaderInterleaved(Sample* buf, size_t frames, int channels,
+                                     const CarGains& g) {
+    // Android channel orders:
+    // 2ch:  FL FR
+    // 4.0:  FL FR BL BR
+    // 5.1:  FL FR FC LFE BL BR
+    // 7.1:  FL FR FC LFE BL BR SL SR
+    for (size_t i = 0; i < frames; ++i) {
+        Sample* f = buf + i * channels;
+        if (channels >= 2) {
+            f[0] = clampCast<Sample>(static_cast<float>(f[0]) * g.fl);
+            f[1] = clampCast<Sample>(static_cast<float>(f[1]) * g.fr);
+        }
+        if (channels == 4) {
+            f[2] = clampCast<Sample>(static_cast<float>(f[2]) * g.rl);
+            f[3] = clampCast<Sample>(static_cast<float>(f[3]) * g.rr);
+        } else if (channels == 6) {
+            f[2] = clampCast<Sample>(static_cast<float>(f[2]) * g.fc);
+            f[3] = clampCast<Sample>(static_cast<float>(f[3]) * g.lfe);
+            f[4] = clampCast<Sample>(static_cast<float>(f[4]) * g.rl);
+            f[5] = clampCast<Sample>(static_cast<float>(f[5]) * g.rr);
+        } else if (channels == 8) {
+            f[2] = clampCast<Sample>(static_cast<float>(f[2]) * g.fc);
+            f[3] = clampCast<Sample>(static_cast<float>(f[3]) * g.lfe);
+            f[4] = clampCast<Sample>(static_cast<float>(f[4]) * g.rl);
+            f[5] = clampCast<Sample>(static_cast<float>(f[5]) * g.rr);
+            f[6] = clampCast<Sample>(static_cast<float>(f[6]) * g.sl);
+            f[7] = clampCast<Sample>(static_cast<float>(f[7]) * g.sr);
+        }
+    }
+}
+
+void applyCarBalanceFader(void* buffer, size_t frames, const pcm_config& cfg) {
+    const int ch = cfg.channels;
+    if (!(ch == 2 || ch == 4 || ch == 6 || ch == 8)) return;
+
+    const float balance = primary::PrimaryMixer::getBalance();
+    const float fader = primary::PrimaryMixer::getFader();
+    if (balance == 0.0f && fader == 0.0f) return;
+
+    const CarGains g = computeCarGains(balance, fader);
+    switch (cfg.format) {
+        case PCM_FORMAT_S16_LE:
+            applyCarBalanceFaderInterleaved<int16_t>(static_cast<int16_t*>(buffer), frames, ch, g);
+            break;
+        case PCM_FORMAT_S32_LE:
+            applyCarBalanceFaderInterleaved<int32_t>(static_cast<int32_t*>(buffer), frames, ch, g);
+            break;
+        case PCM_FORMAT_FLOAT_LE:
+            applyCarBalanceFaderInterleaved<float>(static_cast<float*>(buffer), frames, ch, g);
+            break;
+        default:
+            // Unsupported format: do nothing.
+            break;
+    }
+}
+
+}  // namespace
 
 StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     : StreamAlsa(context, metadata, 3 /*readWriteRetries*/),
@@ -99,6 +212,11 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     // This is a workaround for the emulator implementation which has a host-side buffer
     // and is not being able to achieve real-time behavior similar to ADSPs (b/302587331).
     if (!mSkipNextTransfer) {
+        if (!mIsInput && mConfig.has_value()) {
+            // Apply automotive balance/fader before handing audio to the ALSA pipeline.
+            // This preserves discrete routing for 4.0/5.1/7.1 outputs.
+            applyCarBalanceFader(buffer, frameCount, mConfig.value());
+        }
         RETURN_STATUS_IF_ERROR(
                 StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs));
     } else {

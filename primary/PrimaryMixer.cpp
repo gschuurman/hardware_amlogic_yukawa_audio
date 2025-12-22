@@ -16,6 +16,7 @@
 
 #define LOG_TAG "AHAL_PrimaryMixer"
 
+#include <algorithm>
 #include <fstream>
 #include <regex>
 
@@ -106,6 +107,26 @@ PrimaryMixer::PrimaryMixer() : alsa::Mixer(getAlsaCard()) {
 PrimaryMixer& PrimaryMixer::getInstance() {
     static PrimaryMixer gInstance;
     return gInstance;
+}
+
+// static
+void PrimaryMixer::setBalance(float balance) {
+    getInstance().mBalance.store(std::clamp(balance, -1.0f, 1.0f));
+}
+
+// static
+void PrimaryMixer::setFader(float fader) {
+    getInstance().mFader.store(std::clamp(fader, -1.0f, 1.0f));
+}
+
+// static
+float PrimaryMixer::getBalance() {
+    return getInstance().mBalance.load();
+}
+
+// static
+float PrimaryMixer::getFader() {
+    return getInstance().mFader.load();
 }
 
 }  // namespace aidl::android::hardware::audio::core::primary

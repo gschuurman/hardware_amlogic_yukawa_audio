@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <string>
 
 #include "alsa/Mixer.h"
@@ -34,8 +35,19 @@ class PrimaryMixer : public alsa::Mixer {
     static int getAlsaDevice();
     static int findAlsaCardByName(const std::string& cardName);
 
+    // Automotive balance/fader controls.
+    // balance: -1.0 = full left, 0.0 = center, +1.0 = full right
+    // fader:   -1.0 = full rear, 0.0 = center, +1.0 = full front
+    static void setBalance(float balance);
+    static void setFader(float fader);
+    static float getBalance();
+    static float getFader();
+
   private:
     PrimaryMixer();
+
+    std::atomic<float> mBalance{0.0f};
+    std::atomic<float> mFader{0.0f};
 };
 
 }  // namespace aidl::android::hardware::audio::core::primary
