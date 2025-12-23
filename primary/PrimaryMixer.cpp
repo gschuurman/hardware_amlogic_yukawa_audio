@@ -17,6 +17,7 @@
 #define LOG_TAG "AHAL_PrimaryMixer"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <regex>
 
@@ -38,6 +39,9 @@ int PrimaryMixer::findAlsaCardByName(const std::string& cardName) {
     }
 
     std::string line;
+    std::string cardNameLower = cardName;
+    std::transform(cardNameLower.begin(), cardNameLower.end(), cardNameLower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
     // Regex to match card line: whitespace, card number, space, [name], colon
     std::regex cardRegex(R"(^\s*(\d+)\s+\[([^\]]+)\])");
 
@@ -49,9 +53,13 @@ int PrimaryMixer::findAlsaCardByName(const std::string& cardName) {
             // Trim trailing whitespace from name
             name.erase(name.find_last_not_of(" \t") + 1);
 
+            std::string loweredName = name;
+            std::transform(loweredName.begin(), loweredName.end(), loweredName.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+
             LOG(DEBUG) << __func__ << ": Found card " << cardNum << " name='" << name << "'";
 
-            if (name.find(cardName) != std::string::npos) {
+            if (loweredName.find(cardNameLower) != std::string::npos) {
                 LOG(INFO) << __func__ << ": Matched card " << cardNum
                           << " for requested name '" << cardName << "'";
                 return cardNum;

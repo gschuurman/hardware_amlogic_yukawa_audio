@@ -204,47 +204,69 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     return ::android::OK;
 }
 
+// ::android::status_t StreamPrimary::transfer(void* buffer, size_t frameCount,
+//                                             size_t* actualFrameCount, int32_t* latencyMs) {
+//     if (isStubStreamOnWorker()) {
+//         return mStubDriver.transfer(buffer, frameCount, actualFrameCount, latencyMs);
+//     }
+//     // This is a workaround for the emulator implementation which has a host-side buffer
+//     // and is not being able to achieve real-time behavior similar to ADSPs (b/302587331).
+//     if (!mSkipNextTransfer) {
+//         if (!mIsInput && mConfig.has_value()) {
+//             // Apply automotive balance/fader before handing audio to the ALSA pipeline.
+//             // This preserves discrete routing for 4.0/5.1/7.1 outputs.
+//             applyCarBalanceFader(buffer, frameCount, mConfig.value());
+//         }
+//         RETURN_STATUS_IF_ERROR(
+//                 StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs));
+//     } else {
+//         LOG(DEBUG) << __func__ << ": skipping transfer (" << frameCount << " frames)";
+//         *actualFrameCount = frameCount;
+//         if (mIsInput) memset(buffer, 0, frameCount * mFrameSizeBytes);
+//         mSkipNextTransfer = false;
+//     }
+//     if (!mIsAsynchronous) {
+//         const long bufferDurationUs =
+//                 (*actualFrameCount) * MICROS_PER_SECOND / mContext.getSampleRate();
+//         const auto totalDurationUs =
+//                 (::android::uptimeNanos() - mStartTimeNs) / NANOS_PER_MICROSECOND;
+//         mFramesSinceStart += *actualFrameCount;
+//         const long totalOffsetUs =
+//                 mFramesSinceStart * MICROS_PER_SECOND / mContext.getSampleRate() - totalDurationUs;
+//         LOG(VERBOSE) << __func__ << ": totalOffsetUs " << totalOffsetUs;
+//         if (totalOffsetUs > 0) {
+//             const long sleepTimeUs = std::min(totalOffsetUs, bufferDurationUs);
+//             LOG(VERBOSE) << __func__ << ": sleeping for " << sleepTimeUs << " us";
+//             usleep(sleepTimeUs);
+//         } else {
+//             mSkipNextTransfer = true;
+//         }
+//     } else {
+//         LOG(VERBOSE) << __func__ << ": asynchronous transfer";
+//     }
+//     return ::android::OK;
+// }
+
 ::android::status_t StreamPrimary::transfer(void* buffer, size_t frameCount,
                                             size_t* actualFrameCount, int32_t* latencyMs) {
+    // 1. Keep the Stub check (for other device types)
     if (isStubStreamOnWorker()) {
         return mStubDriver.transfer(buffer, frameCount, actualFrameCount, latencyMs);
     }
-    // This is a workaround for the emulator implementation which has a host-side buffer
-    // and is not being able to achieve real-time behavior similar to ADSPs (b/302587331).
-    if (!mSkipNextTransfer) {
-        if (!mIsInput && mConfig.has_value()) {
-            // Apply automotive balance/fader before handing audio to the ALSA pipeline.
-            // This preserves discrete routing for 4.0/5.1/7.1 outputs.
-            applyCarBalanceFader(buffer, frameCount, mConfig.value());
-        }
-        RETURN_STATUS_IF_ERROR(
-                StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs));
-    } else {
-        LOG(DEBUG) << __func__ << ": skipping transfer (" << frameCount << " frames)";
-        *actualFrameCount = frameCount;
-        if (mIsInput) memset(buffer, 0, frameCount * mFrameSizeBytes);
-        mSkipNextTransfer = false;
+
+    // --- PATCH: EMULATOR WORKAROUND REMOVED ---
+    
+    // 2. (Optional) Apply Fader. 
+    // If you still get pure silence (zeros), comment these 3 lines out to test "Raw Pass-Through".
+    if (!mIsInput && mConfig.has_value()) {
+        applyCarBalanceFader(buffer, frameCount, mConfig.value());
     }
-    if (!mIsAsynchronous) {
-        const long bufferDurationUs =
-                (*actualFrameCount) * MICROS_PER_SECOND / mContext.getSampleRate();
-        const auto totalDurationUs =
-                (::android::uptimeNanos() - mStartTimeNs) / NANOS_PER_MICROSECOND;
-        mFramesSinceStart += *actualFrameCount;
-        const long totalOffsetUs =
-                mFramesSinceStart * MICROS_PER_SECOND / mContext.getSampleRate() - totalDurationUs;
-        LOG(VERBOSE) << __func__ << ": totalOffsetUs " << totalOffsetUs;
-        if (totalOffsetUs > 0) {
-            const long sleepTimeUs = std::min(totalOffsetUs, bufferDurationUs);
-            LOG(VERBOSE) << __func__ << ": sleeping for " << sleepTimeUs << " us";
-            usleep(sleepTimeUs);
-        } else {
-            mSkipNextTransfer = true;
-        }
-    } else {
-        LOG(VERBOSE) << __func__ << ": asynchronous transfer";
-    }
-    return ::android::OK;
+
+    // 3. ALWAYS transfer. 
+    // We removed the 'if (!mSkipNextTransfer)' check and the timing calculation loop.
+    // This relies on the kernel driver to block when the buffer is full, which is 
+    // the correct behavior for real hardware.
+    return StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs);
 }
 
 ::android::status_t StreamPrimary::refinePosition(StreamDescriptor::Position*) {
@@ -319,11 +341,9 @@ bool StreamPrimary::useStubStream(
             GetBoolProperty("ro.boot.audio.tinyalsa.ignore_output", false);
     if (isInput) {
         return kSimulateInput || device.type.type == AudioDeviceType::IN_TELEPHONY_RX ||
-               device.type.type == AudioDeviceType::IN_FM_TUNER ||
-               device.type.connection == AudioDeviceDescription::CONNECTION_BUS /*deprecated */;
+               device.type.type == AudioDeviceType::IN_FM_TUNER;
     }
-    return kSimulateOutput || device.type.type == AudioDeviceType::OUT_TELEPHONY_TX ||
-           device.type.connection == AudioDeviceDescription::CONNECTION_BUS /*deprecated*/;
+    return kSimulateOutput || device.type.type == AudioDeviceType::OUT_TELEPHONY_TX;
 }
 
 StreamInPrimary::StreamInPrimary(StreamContext&& context, const SinkMetadata& sinkMetadata,

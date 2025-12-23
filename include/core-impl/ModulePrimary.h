@@ -54,6 +54,8 @@ class ModulePrimary final : public Module {
 
   private:
     ChildInterface<ITelephony> mTelephony;
+    std::atomic<float> mCarBalance{0.0f};
+    std::atomic<float> mCarFader{0.0f};
 };
 
 }  // namespace aidl::android::hardware::audio::core
