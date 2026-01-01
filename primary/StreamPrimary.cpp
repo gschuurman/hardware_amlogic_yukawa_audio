@@ -313,23 +313,50 @@ bool StreamPrimary::isStubStream() {
     return mAlsaDeviceId == kStubDeviceId;
 }
 
-// static
+// Map logical AAOS BUS outputs to the primary ALSA device.  Android Automotive
+// routes contexts like media, navigation, system and calls to AUDIO_DEVICE_OUT_BUS
+// devices with unique addresses (bus0_media_out, bus1_nav_out, etc.).  These
+// addresses are defined in the HAL configuration (Configuration.cpp) and exposed
+// to the framework.  The HAL must translate any OUT_BUS device to the
+// underlying physical output (typically the USB DAC).  This implementation
+// checks for BUS device types or addresses and returns the primary mixer card
+// and device.  Explicit addresses of the form "CARD_x_DEV_y" still override
+// the mapping for debugging purposes.
 StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
         const std::vector<AudioDevice>& devices) {
-    if (devices.empty() || devices[0].address.getTag() != AudioDeviceAddress::id) {
-        return kDefaultCardAndDeviceId;
+    // Default to the primary ALSA device (USB DAC)
+    const AlsaDeviceId primaryOut{kDefaultCardAndDeviceId};
+    if (devices.empty()) {
+        return primaryOut;
     }
-    std::string deviceAddress = devices[0].address.get<AudioDeviceAddress::id>();
-    AlsaDeviceId cardAndDeviceId;
-    if (const size_t suffixPos = deviceAddress.rfind("CARD_");
-        suffixPos == std::string::npos ||
-        sscanf(deviceAddress.c_str() + suffixPos, "CARD_%d_DEV_%d", &cardAndDeviceId.first,
-               &cardAndDeviceId.second) != 2) {
-        return kDefaultCardAndDeviceId;
+    const AudioDevice& dev = devices[0];
+    // If the device is a BUS output (type or connection), map to primary
+    if (dev.type.type == AudioDeviceType::OUT_BUS ||
+        dev.type.connection == AudioDeviceDescription::CONNECTION_BUS) {
+        std::string addr = dev.address.getTag() == AudioDeviceAddress::id
+                                           ? dev.address.get<AudioDeviceAddress::id>()
+                                           : std::string("<none>");
+        LOG(INFO) << __func__ << ": mapping OUT_BUS device '" << addr
+                  << "' to primary ALSA device (card=" << primaryOut.first
+                  << ", device=" << primaryOut.second << ")";
+        return primaryOut;
     }
-    LOG(DEBUG) << __func__ << ": parsed with card id " << cardAndDeviceId.first << ", device id "
-               << cardAndDeviceId.second;
-    return cardAndDeviceId;
+    // Parse explicit "CARD_x_DEV_y" overrides
+    if (dev.address.getTag() == AudioDeviceAddress::id) {
+        std::string deviceAddress = dev.address.get<AudioDeviceAddress::id>();
+        AlsaDeviceId cardAndDeviceId;
+        if (const size_t suffixPos = deviceAddress.rfind("CARD_");
+            suffixPos != std::string::npos &&
+            sscanf(deviceAddress.c_str() + suffixPos, "CARD_%d_DEV_%d",
+                   &cardAndDeviceId.first, &cardAndDeviceId.second) == 2) {
+            LOG(INFO) << __func__ << ": parsed address '" << deviceAddress
+                      << "' as card=" << cardAndDeviceId.first << ", device="
+                      << cardAndDeviceId.second;
+            return cardAndDeviceId;
+        }
+    }
+    // Fallback to primary
+    return primaryOut;
 }
 
 // static

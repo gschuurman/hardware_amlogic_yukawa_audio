@@ -208,6 +208,88 @@ std::unique_ptr<Configuration> getPrimaryConfiguration() {
 
         // Device ports
 
+        // ---------------------------------------------------------------------------
+        // AAOS BUS devices
+        //
+        // Android Automotive uses logical BUS outputs for different contexts like media,
+        // navigation, system sounds and phone calls. CarAudioService validates that these
+        // devices are defined in the HAL configuration and exposed to the framework.
+        // Without them, CarService will crash during startup with an error like:
+        //     "Output device address bus0_media_out does not belong to any configured output device".
+        // To fix this, we declare a set of bus device ports here, each with a unique
+        // address and type AUDIO_DEVICE_OUT_BUS. Each port uses the standard PCM audio
+        // profiles and is added to the initialConfigs so that it is considered connected
+        // when the HAL loads. Later, StreamPrimary::getCardAndDeviceId() maps these
+        // logical buses to the primary ALSA output (usually a USB DAC).
+
+        // Media output (bus0_media_out)
+        AudioPort bus0MediaOutDevice =
+                createPort(c.nextPortId++, "bus0_media_out", 0 /* audioProfilesCount */, false,
+                           createDeviceExtWithAddress(
+                                   AudioDeviceType::OUT_BUS,
+                                   1 << AudioPortDeviceExt::FLAG_INDEX_DEFAULT_DEVICE,
+                                   "bus0_media_out",
+                                   AudioDeviceDescription::CONNECTION_BUS));
+        bus0MediaOutDevice.profiles.insert(bus0MediaOutDevice.profiles.begin(),
+                                           standardPcmAudioProfiles.begin(),
+                                           standardPcmAudioProfiles.end());
+        c.ports.push_back(bus0MediaOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus0MediaOutDevice.id, bus0MediaOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus0_media_out",
+                                           AudioDeviceDescription::CONNECTION_BUS)));
+
+        // Navigation output (bus1_nav_out)
+        AudioPort bus1NavOutDevice =
+                createPort(c.nextPortId++, "bus1_nav_out", 0 /* audioProfilesCount */, false,
+                           createDeviceExtWithAddress(
+                                   AudioDeviceType::OUT_BUS,
+                                   0,
+                                   "bus1_nav_out",
+                                   AudioDeviceDescription::CONNECTION_BUS));
+        bus1NavOutDevice.profiles.insert(bus1NavOutDevice.profiles.begin(),
+                                         standardPcmAudioProfiles.begin(),
+                                         standardPcmAudioProfiles.end());
+        c.ports.push_back(bus1NavOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus1NavOutDevice.id, bus1NavOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus1_nav_out",
+                                           AudioDeviceDescription::CONNECTION_BUS)));
+
+        // System/notification output (bus2_system_out)
+        AudioPort bus2SystemOutDevice =
+                createPort(c.nextPortId++, "bus2_system_out", 0 /* audioProfilesCount */, false,
+                           createDeviceExtWithAddress(
+                                   AudioDeviceType::OUT_BUS,
+                                   0,
+                                   "bus2_system_out",
+                                   AudioDeviceDescription::CONNECTION_BUS));
+        bus2SystemOutDevice.profiles.insert(bus2SystemOutDevice.profiles.begin(),
+                                            standardPcmAudioProfiles.begin(),
+                                            standardPcmAudioProfiles.end());
+        c.ports.push_back(bus2SystemOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus2SystemOutDevice.id, bus2SystemOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus2_system_out",
+                                           AudioDeviceDescription::CONNECTION_BUS)));
+
+        // Call/communications output (bus3_call_out)
+        AudioPort bus3CallOutDevice =
+                createPort(c.nextPortId++, "bus3_call_out", 0 /* audioProfilesCount */, false,
+                           createDeviceExtWithAddress(
+                                   AudioDeviceType::OUT_BUS,
+                                   0,
+                                   "bus3_call_out",
+                                   AudioDeviceDescription::CONNECTION_BUS));
+        bus3CallOutDevice.profiles.insert(bus3CallOutDevice.profiles.begin(),
+                                          standardPcmAudioProfiles.begin(),
+                                          standardPcmAudioProfiles.end());
+        c.ports.push_back(bus3CallOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus3CallOutDevice.id, bus3CallOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus3_call_out",
+                                           AudioDeviceDescription::CONNECTION_BUS)));
+
         AudioPort speakerOutDevice =
                 createPort(c.nextPortId++, "Speaker", 0, false,
                            createDeviceExt(AudioDeviceType::OUT_SPEAKER,
