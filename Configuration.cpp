@@ -94,6 +94,20 @@ static AudioPortExt createPortMixExt(int32_t maxOpenStreamCount, int32_t maxActi
     return AudioPortExt::make<AudioPortExt::Tag::mix>(mixExt);
 }
 
+// Create a device port extension for an output device with an explicit address.  This helper
+// mirrors createDeviceExt() but allows specifying a bus address.  It is used to declare
+// logical BUS outputs (e.g. bus0_media_out) that must have unique address strings.
+static AudioPortExt createDeviceExtWithAddress(AudioDeviceType devType, int32_t flags,
+                                               std::string address,
+                                               std::string connection) {
+    AudioPortDeviceExt deviceExt;
+    deviceExt.device.type.type = devType;
+    deviceExt.device.address = std::move(address);
+    deviceExt.device.type.connection = std::move(connection);
+    deviceExt.flags = flags;
+    return AudioPortExt::make<AudioPortExt::Tag::device>(deviceExt);
+}
+
 static AudioPort createPort(int32_t id, const std::string& name, int32_t flags, bool isInput,
                             const AudioPortExt& ext) {
     AudioPort port;
