@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -182,6 +182,8 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     return isStubStreamOnWorker() ? mStubDriver.standby() : StreamAlsa::standby();
 }
 
+// In core-impl/StreamPrimary.cpp
+
 ::android::status_t StreamPrimary::start() {
     bool isStub = true, shutdownAlsaStream = false;
     {
@@ -192,11 +194,41 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
         mCurrAlsaDeviceId = mAlsaDeviceId;
     }
     if (shutdownAlsaStream) {
-        StreamAlsa::shutdown();  // Close currently opened ALSA devices.
+        StreamAlsa::shutdown();
     }
     if (isStub) {
+        LOG(INFO) << __func__ << ": USING STUB!";
         return mStubDriver.start();
     }
+
+    // --- FIX: ALIGN WITH BUILD.PROP (2048/4) ---
+    // Android sends 4096 frames. We need a buffer larger than 4096 to avoid drops.
+    // 2048 * 4 = 8192 frames. This is safe.
+    
+    auto& mutableConfig = const_cast<std::optional<struct pcm_config>&>(mConfig);
+
+    if (!mutableConfig.has_value()) {
+        mutableConfig = pcm_config{};
+    }
+
+    // 1. Force Stereo (Matches your current XML)
+    mutableConfig->channels = 2; 
+
+    // 2. Standard Sample Rate
+    mutableConfig->rate = 48000;
+    mutableConfig->format = PCM_FORMAT_S16_LE;
+
+    // 3. BUFFER FIX: Matches your PRODUCT_PROPERTY_OVERRIDES
+    mutableConfig->period_size = 2048; 
+    mutableConfig->period_count = 4; 
+    
+    // 4. Thresholds (Standard TinyALSA logic)
+    mutableConfig->start_threshold = 2048 * 2; // Start after 2 periods (safe)
+    mutableConfig->stop_threshold = 2048 * 4;  // Stop when full
+    mutableConfig->silence_threshold = 0;
+
+    LOG(INFO) << __func__ << ": Forcing PCM Config: 2ch, 48kHz, Period=2048, Count=4 (Total 8192)";
+
     RETURN_STATUS_IF_ERROR(StreamAlsa::start());
     mStartTimeNs = ::android::uptimeNanos();
     mFramesSinceStart = 0;
@@ -204,68 +236,21 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     return ::android::OK;
 }
 
-// ::android::status_t StreamPrimary::transfer(void* buffer, size_t frameCount,
-//                                             size_t* actualFrameCount, int32_t* latencyMs) {
-//     if (isStubStreamOnWorker()) {
-//         return mStubDriver.transfer(buffer, frameCount, actualFrameCount, latencyMs);
-//     }
-//     // This is a workaround for the emulator implementation which has a host-side buffer
-//     // and is not being able to achieve real-time behavior similar to ADSPs (b/302587331).
-//     if (!mSkipNextTransfer) {
-//         if (!mIsInput && mConfig.has_value()) {
-//             // Apply automotive balance/fader before handing audio to the ALSA pipeline.
-//             // This preserves discrete routing for 4.0/5.1/7.1 outputs.
-//             applyCarBalanceFader(buffer, frameCount, mConfig.value());
-//         }
-//         RETURN_STATUS_IF_ERROR(
-//                 StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs));
-//     } else {
-//         LOG(DEBUG) << __func__ << ": skipping transfer (" << frameCount << " frames)";
-//         *actualFrameCount = frameCount;
-//         if (mIsInput) memset(buffer, 0, frameCount * mFrameSizeBytes);
-//         mSkipNextTransfer = false;
-//     }
-//     if (!mIsAsynchronous) {
-//         const long bufferDurationUs =
-//                 (*actualFrameCount) * MICROS_PER_SECOND / mContext.getSampleRate();
-//         const auto totalDurationUs =
-//                 (::android::uptimeNanos() - mStartTimeNs) / NANOS_PER_MICROSECOND;
-//         mFramesSinceStart += *actualFrameCount;
-//         const long totalOffsetUs =
-//                 mFramesSinceStart * MICROS_PER_SECOND / mContext.getSampleRate() - totalDurationUs;
-//         LOG(VERBOSE) << __func__ << ": totalOffsetUs " << totalOffsetUs;
-//         if (totalOffsetUs > 0) {
-//             const long sleepTimeUs = std::min(totalOffsetUs, bufferDurationUs);
-//             LOG(VERBOSE) << __func__ << ": sleeping for " << sleepTimeUs << " us";
-//             usleep(sleepTimeUs);
-//         } else {
-//             mSkipNextTransfer = true;
-//         }
-//     } else {
-//         LOG(VERBOSE) << __func__ << ": asynchronous transfer";
-//     }
-//     return ::android::OK;
-// }
-
+// Fixed transfer function: Eliminates Emulator sleep logic and forces ALSA write
 ::android::status_t StreamPrimary::transfer(void* buffer, size_t frameCount,
                                             size_t* actualFrameCount, int32_t* latencyMs) {
-    // 1. Keep the Stub check (for other device types)
     if (isStubStreamOnWorker()) {
         return mStubDriver.transfer(buffer, frameCount, actualFrameCount, latencyMs);
     }
 
-    // --- PATCH: EMULATOR WORKAROUND REMOVED ---
-    
-    // 2. (Optional) Apply Fader. 
-    // If you still get pure silence (zeros), comment these 3 lines out to test "Raw Pass-Through".
+    // Apply Automotive Fader/Balance (if enabled)
     if (!mIsInput && mConfig.has_value()) {
         applyCarBalanceFader(buffer, frameCount, mConfig.value());
     }
 
-    // 3. ALWAYS transfer. 
-    // We removed the 'if (!mSkipNextTransfer)' check and the timing calculation loop.
-    // This relies on the kernel driver to block when the buffer is full, which is 
-    // the correct behavior for real hardware.
+    // Directly call StreamAlsa::transfer
+    // This calls pcm_write, which BLOCKS until the hardware consumes the data.
+    // This is correct behavior for real hardware (USB DAC).
     return StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs);
 }
 
@@ -313,35 +298,35 @@ bool StreamPrimary::isStubStream() {
     return mAlsaDeviceId == kStubDeviceId;
 }
 
-// Map logical AAOS BUS outputs to the primary ALSA device.  Android Automotive
-// routes contexts like media, navigation, system and calls to AUDIO_DEVICE_OUT_BUS
-// devices with unique addresses (bus0_media_out, bus1_nav_out, etc.).  These
-// addresses are defined in the HAL configuration (Configuration.cpp) and exposed
-// to the framework.  The HAL must translate any OUT_BUS device to the
-// underlying physical output (typically the USB DAC).  This implementation
-// checks for BUS device types or addresses and returns the primary mixer card
-// and device.  Explicit addresses of the form "CARD_x_DEV_y" still override
-// the mapping for debugging purposes.
+// Map logical AAOS BUS outputs to the primary ALSA device.
 StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
         const std::vector<AudioDevice>& devices) {
-    // Default to the primary ALSA device (USB DAC)
-    const AlsaDeviceId primaryOut{kDefaultCardAndDeviceId};
+    
+    // --- FIX: Force Card 0, Device 0 for Primary ---
+    // Using kDefaultCardAndDeviceId is risky if it defaults to -1.
+    // We hardcode this to {0, 0} because we know your USB DAC is at Card 0.
+    const AlsaDeviceId primaryOut{0, 0}; 
+
     if (devices.empty()) {
         return primaryOut;
     }
     const AudioDevice& dev = devices[0];
+    
     // If the device is a BUS output (type or connection), map to primary
     if (dev.type.type == AudioDeviceType::OUT_BUS ||
         dev.type.connection == AudioDeviceDescription::CONNECTION_BUS) {
+        
+        // Log the mapping so we can debug it in logcat
         std::string addr = dev.address.getTag() == AudioDeviceAddress::id
-                                           ? dev.address.get<AudioDeviceAddress::id>()
-                                           : std::string("<none>");
+                                         ? dev.address.get<AudioDeviceAddress::id>()
+                                         : std::string("<none>");
         LOG(INFO) << __func__ << ": mapping OUT_BUS device '" << addr
-                  << "' to primary ALSA device (card=" << primaryOut.first
-                  << ", device=" << primaryOut.second << ")";
+                  << "' to physical Card 0, Device 0";
+                  
         return primaryOut;
     }
-    // Parse explicit "CARD_x_DEV_y" overrides
+    
+    // Parse explicit "CARD_x_DEV_y" overrides (keep existing logic)
     if (dev.address.getTag() == AudioDeviceAddress::id) {
         std::string deviceAddress = dev.address.get<AudioDeviceAddress::id>();
         AlsaDeviceId cardAndDeviceId;
