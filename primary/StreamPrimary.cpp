@@ -197,37 +197,57 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
         StreamAlsa::shutdown();
     }
     if (isStub) {
-        LOG(INFO) << __func__ << ": USING STUB!";
         return mStubDriver.start();
     }
 
-    // --- FIX: ALIGN WITH BUILD.PROP (2048/4) ---
-    // Android sends 4096 frames. We need a buffer larger than 4096 to avoid drops.
-    // 2048 * 4 = 8192 frames. This is safe.
+    // --- SMART CONFIGURATION FIX ---
+
+    // 1. Calculate actual channels from the context layout
+    int actualChannels = 2; // Default
+    auto layout = mContext.getChannelLayout();
     
+    using Tag = aidl::android::media::audio::common::AudioChannelLayout::Tag;
+    switch (layout.getTag()) {
+        case Tag::layoutMask:
+            actualChannels = __builtin_popcount(layout.get<Tag::layoutMask>());
+            break;
+        case Tag::indexMask:
+            actualChannels = __builtin_popcount(layout.get<Tag::indexMask>());
+            break;
+        case Tag::voiceMask:
+            actualChannels = __builtin_popcount(layout.get<Tag::voiceMask>());
+            break;
+        default:
+            LOG(WARNING) << __func__ << ": Unknown layout tag, using default 2ch";
+            break;
+    }
+
+    // 2. Load properties or fallback to USB defaults (1024/4)
+    // This restores your ability to tune via build.prop
+    int periodSize = ::android::base::GetIntProperty("ro.vendor.audio.period_size", 1024);
+    int periodCount = ::android::base::GetIntProperty("ro.vendor.audio.period_count", 4);
+
     auto& mutableConfig = const_cast<std::optional<struct pcm_config>&>(mConfig);
 
     if (!mutableConfig.has_value()) {
         mutableConfig = pcm_config{};
     }
 
-    // 1. Force Stereo (Matches your current XML)
-    mutableConfig->channels = 2; 
-
-    // 2. Standard Sample Rate
+    mutableConfig->channels = actualChannels; 
     mutableConfig->rate = 48000;
     mutableConfig->format = PCM_FORMAT_S16_LE;
 
-    // 3. BUFFER FIX: Matches your PRODUCT_PROPERTY_OVERRIDES
-    mutableConfig->period_size = 2048; 
-    mutableConfig->period_count = 4; 
+    // Apply the Configurable Values
+    mutableConfig->period_size = periodSize;
+    mutableConfig->period_count = periodCount;
     
-    // 4. Thresholds (Standard TinyALSA logic)
-    mutableConfig->start_threshold = 2048 * 2; // Start after 2 periods (safe)
-    mutableConfig->stop_threshold = 2048 * 4;  // Stop when full
+    // Calculate thresholds based on the configured size
+    mutableConfig->start_threshold = periodSize * 2; 
+    mutableConfig->stop_threshold = periodSize * periodCount;
     mutableConfig->silence_threshold = 0;
 
-    LOG(INFO) << __func__ << ": Forcing PCM Config: 2ch, 48kHz, Period=2048, Count=4 (Total 8192)";
+    LOG(INFO) << __func__ << ": Configured PCM: " << actualChannels << "ch, 48kHz, Period=" 
+              << periodSize << ", Count=" << periodCount;
 
     RETURN_STATUS_IF_ERROR(StreamAlsa::start());
     mStartTimeNs = ::android::uptimeNanos();
