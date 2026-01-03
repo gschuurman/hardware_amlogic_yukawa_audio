@@ -216,6 +216,7 @@ std::unique_ptr<Configuration> getPrimaryConfiguration() {
                                 AudioChannelLayout::LAYOUT_MONO,
                                 AudioChannelLayout::LAYOUT_STEREO,
                                 AudioChannelLayout::LAYOUT_5POINT1,
+                                AudioChannelLayout::LAYOUT_7POINT1,
                         },
                               {8000, 11025, 16000, 32000, 44100, 48000})};
         Configuration c;
@@ -253,56 +254,125 @@ std::unique_ptr<Configuration> getPrimaryConfiguration() {
                 createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus0_media_out",
                                            AudioDeviceDescription::CONNECTION_BUS)));
 
-        // Navigation output (bus1_nav_out)
-        AudioPort bus1NavOutDevice =
-                createPort(c.nextPortId++, "bus1_nav_out", 0 /* audioProfilesCount */, false,
-                           createDeviceExtWithAddress(
-                                   AudioDeviceType::OUT_BUS,
-                                   0,
-                                   "bus1_nav_out",
-                                   AudioDeviceDescription::CONNECTION_BUS));
-        bus1NavOutDevice.profiles.insert(bus1NavOutDevice.profiles.begin(),
-                                         standardPcmAudioProfiles.begin(),
-                                         standardPcmAudioProfiles.end());
-        c.ports.push_back(bus1NavOutDevice);
+        // Navigation output (bus1_navigation_out)
+        AudioPort bus1NavigationOutDevice =
+                createPort(c.nextPortId++, "bus1_navigation_out", 0 /* audioProfilesCount */, false,
+                        createDeviceExtWithAddress(
+                                AudioDeviceType::OUT_BUS,
+                                0,
+                                "bus1_navigation_out",
+                                AudioDeviceDescription::CONNECTION_BUS));
+        bus1NavigationOutDevice.profiles.insert(bus1NavigationOutDevice.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus1NavigationOutDevice);
         c.initialConfigs.push_back(createDynamicPortConfig(
-                bus1NavOutDevice.id, bus1NavOutDevice.id, 0, false,
-                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus1_nav_out",
-                                           AudioDeviceDescription::CONNECTION_BUS)));
+                bus1NavigationOutDevice.id, bus1NavigationOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus1_navigation_out",
+                                        AudioDeviceDescription::CONNECTION_BUS)));
 
-        // System/notification output (bus2_system_out)
-        AudioPort bus2SystemOutDevice =
-                createPort(c.nextPortId++, "bus2_system_out", 0 /* audioProfilesCount */, false,
-                           createDeviceExtWithAddress(
-                                   AudioDeviceType::OUT_BUS,
-                                   0,
-                                   "bus2_system_out",
-                                   AudioDeviceDescription::CONNECTION_BUS));
-        bus2SystemOutDevice.profiles.insert(bus2SystemOutDevice.profiles.begin(),
-                                            standardPcmAudioProfiles.begin(),
-                                            standardPcmAudioProfiles.end());
-        c.ports.push_back(bus2SystemOutDevice);
+        // Voice command output (bus2_voice_command_out)
+        AudioPort bus2VoiceCommandOutDevice =
+                createPort(c.nextPortId++, "bus2_voice_command_out", 0 /* audioProfilesCount */, false,
+                                createDeviceExtWithAddress(
+                                        AudioDeviceType::OUT_BUS,
+                                        0,
+                                        "bus2_voice_command_out",
+                                        AudioDeviceDescription::CONNECTION_BUS));
+        bus2VoiceCommandOutDevice.profiles.insert(bus2VoiceCommandOutDevice.profiles.begin(),
+                                                        standardPcmAudioProfiles.begin(),
+                                                        standardPcmAudioProfiles.end());
+        c.ports.push_back(bus2VoiceCommandOutDevice);
         c.initialConfigs.push_back(createDynamicPortConfig(
-                bus2SystemOutDevice.id, bus2SystemOutDevice.id, 0, false,
-                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus2_system_out",
-                                           AudioDeviceDescription::CONNECTION_BUS)));
+                bus2VoiceCommandOutDevice.id, bus2VoiceCommandOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus2_voice_command_out",
+                                                AudioDeviceDescription::CONNECTION_BUS)));
 
-        // Call/communications output (bus3_call_out)
-        AudioPort bus3CallOutDevice =
-                createPort(c.nextPortId++, "bus3_call_out", 0 /* audioProfilesCount */, false,
-                           createDeviceExtWithAddress(
-                                   AudioDeviceType::OUT_BUS,
-                                   0,
-                                   "bus3_call_out",
-                                   AudioDeviceDescription::CONNECTION_BUS));
-        bus3CallOutDevice.profiles.insert(bus3CallOutDevice.profiles.begin(),
-                                          standardPcmAudioProfiles.begin(),
-                                          standardPcmAudioProfiles.end());
-        c.ports.push_back(bus3CallOutDevice);
+
+        // Call ring output (bus3_call_ring_out)
+        AudioPort bus3CallRingOutDevice =
+                createPort(c.nextPortId++, "bus3_call_ring_out", 0 /* audioProfilesCount */, false,
+                                createDeviceExtWithAddress(
+                                        AudioDeviceType::OUT_BUS,
+                                        0,
+                                        "bus3_call_ring_out",
+                                        AudioDeviceDescription::CONNECTION_BUS));
+        bus3CallRingOutDevice.profiles.insert(bus3CallRingOutDevice.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus3CallRingOutDevice);
         c.initialConfigs.push_back(createDynamicPortConfig(
-                bus3CallOutDevice.id, bus3CallOutDevice.id, 0, false,
-                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus3_call_out",
-                                           AudioDeviceDescription::CONNECTION_BUS)));
+                bus3CallRingOutDevice.id, bus3CallRingOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus3_call_ring_out",
+                                                AudioDeviceDescription::CONNECTION_BUS)));
+                
+        // Call/communications output (bus4_call_out)
+        AudioPort bus4CallOutDevice =
+                createPort(c.nextPortId++, "bus4_call_out", 0 /* audioProfilesCount */, false,
+                                createDeviceExtWithAddress(
+                                        AudioDeviceType::OUT_BUS,
+                                        0,
+                                        "bus4_call_out",
+                                        AudioDeviceDescription::CONNECTION_BUS));
+        bus4CallOutDevice.profiles.insert(bus4CallOutDevice.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus4CallOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus4CallOutDevice.id, bus4CallOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus4_call_out",
+                                                AudioDeviceDescription::CONNECTION_BUS)));
+                
+        // Alarm output (bus5_alarm_out)
+        AudioPort bus5AlarmOutDevice =
+                createPort(c.nextPortId++, "bus5_alarm_out", 0 /* audioProfilesCount */, false,
+                                createDeviceExtWithAddress(
+                                        AudioDeviceType::OUT_BUS,
+                                        0,
+                                        "bus5_alarm_out",
+                                        AudioDeviceDescription::CONNECTION_BUS));
+        bus5AlarmOutDevice.profiles.insert(bus5AlarmOutDevice.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus5AlarmOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus5AlarmOutDevice.id, bus5AlarmOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus5_alarm_out",
+                                                AudioDeviceDescription::CONNECTION_BUS)));
+                
+        // Notification output (bus6_notification_out)
+        AudioPort bus6NotificationOutDevice =
+                createPort(c.nextPortId++, "bus6_notification_out", 0 /* audioProfilesCount */, false,
+                                createDeviceExtWithAddress(
+                                        AudioDeviceType::OUT_BUS,
+                                        0,
+                                        "bus6_notification_out",
+                                        AudioDeviceDescription::CONNECTION_BUS));
+        bus6NotificationOutDevice.profiles.insert(bus6NotificationOutDevice.profiles.begin(),
+                                                        standardPcmAudioProfiles.begin(),
+                                                        standardPcmAudioProfiles.end());
+        c.ports.push_back(bus6NotificationOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus6NotificationOutDevice.id, bus6NotificationOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus6_notification_out",
+                                                AudioDeviceDescription::CONNECTION_BUS)));
+                
+        // System sound output (bus7_system_sound_out)
+        AudioPort bus7SystemSoundOutDevice =
+                createPort(c.nextPortId++, "bus7_system_sound_out", 0 /* audioProfilesCount */, false,
+                                createDeviceExtWithAddress(
+                                        AudioDeviceType::OUT_BUS,
+                                        0,
+                                        "bus7_system_sound_out",
+                                        AudioDeviceDescription::CONNECTION_BUS));
+        bus7SystemSoundOutDevice.profiles.insert(bus7SystemSoundOutDevice.profiles.begin(),
+                                                        standardPcmAudioProfiles.begin(),
+                                                        standardPcmAudioProfiles.end());
+        c.ports.push_back(bus7SystemSoundOutDevice);
+        c.initialConfigs.push_back(createDynamicPortConfig(
+                bus7SystemSoundOutDevice.id, bus7SystemSoundOutDevice.id, 0, false,
+                createDeviceExtWithAddress(AudioDeviceType::OUT_BUS, 0, "bus7_system_sound_out",
+                                                AudioDeviceDescription::CONNECTION_BUS)));
 
         AudioPort speakerOutDevice =
                 createPort(c.nextPortId++, "Speaker", 0, false,
@@ -383,6 +453,96 @@ std::unique_ptr<Configuration> getPrimaryConfiguration() {
                                      standardPcmAudioProfiles.begin(),
                                      standardPcmAudioProfiles.end());
         c.ports.push_back(fmTunerInMix);
+
+        // ---------------------------------------------------------------------------
+        // Mix ports and routes for AAOS BUS devices
+        //
+        // For each logical BUS output defined above (bus0 through bus7), create a
+        // corresponding mix port.  Each mix port uses the standard PCM audio
+        // profiles and is configured as an output mix with one open and active stream.
+        // Add the mix port to the list of ports and create a route from the mix
+        // port to the matching bus device port.
+                
+        // bus0: media output
+        AudioPort bus0MediaMix =
+                createPort(c.nextPortId++, "mixport_bus0_media_out",
+                                0,
+                                false, createPortMixExt(1, 1));
+        bus0MediaMix.profiles.insert(bus0MediaMix.profiles.begin(),
+                                        standardPcmAudioProfiles.begin(),
+                                        standardPcmAudioProfiles.end());
+        c.ports.push_back(bus0MediaMix);
+        c.routes.push_back(createRoute({bus0MediaMix}, bus0MediaOutDevice));
+                
+        // bus1: navigation output
+        AudioPort bus1NavigationMix =
+                createPort(c.nextPortId++, "mixport_bus1_navigation_out", 0, false,
+                                createPortMixExt(1, 1));
+        bus1NavigationMix.profiles.insert(bus1NavigationMix.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus1NavigationMix);
+        c.routes.push_back(createRoute({bus1NavigationMix}, bus1NavigationOutDevice));
+                
+        // bus2: voice command output
+        AudioPort bus2VoiceCommandMix =
+                createPort(c.nextPortId++, "mixport_bus2_voice_command_out", 0, false,
+                                createPortMixExt(1, 1));
+        bus2VoiceCommandMix.profiles.insert(bus2VoiceCommandMix.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus2VoiceCommandMix);
+        c.routes.push_back(createRoute({bus2VoiceCommandMix}, bus2VoiceCommandOutDevice));
+                
+        // bus3: call ring output
+        AudioPort bus3CallRingMix =
+                createPort(c.nextPortId++, "mixport_bus3_call_ring_out", 0, false,
+                                createPortMixExt(1, 1));
+        bus3CallRingMix.profiles.insert(bus3CallRingMix.profiles.begin(),
+                                        standardPcmAudioProfiles.begin(),
+                                        standardPcmAudioProfiles.end());
+        c.ports.push_back(bus3CallRingMix);
+        c.routes.push_back(createRoute({bus3CallRingMix}, bus3CallRingOutDevice));
+                
+        // bus4: call communications output
+        AudioPort bus4CallMix =
+                createPort(c.nextPortId++, "mixport_bus4_call_out", 0, false,
+                                createPortMixExt(1, 1));
+        bus4CallMix.profiles.insert(bus4CallMix.profiles.begin(),
+                                        standardPcmAudioProfiles.begin(),
+                                        standardPcmAudioProfiles.end());
+        c.ports.push_back(bus4CallMix);
+        c.routes.push_back(createRoute({bus4CallMix}, bus4CallOutDevice));
+                
+        // bus5: alarm output
+        AudioPort bus5AlarmMix =
+                createPort(c.nextPortId++, "mixport_bus5_alarm_out", 0, false,
+                                createPortMixExt(1, 1));
+        bus5AlarmMix.profiles.insert(bus5AlarmMix.profiles.begin(),
+                                        standardPcmAudioProfiles.begin(),
+                                        standardPcmAudioProfiles.end());
+        c.ports.push_back(bus5AlarmMix);
+        c.routes.push_back(createRoute({bus5AlarmMix}, bus5AlarmOutDevice));
+                
+        // bus6: notification output
+        AudioPort bus6NotificationMix =
+                createPort(c.nextPortId++, "mixport_bus6_notification_out", 0, false,
+                                createPortMixExt(1, 1));
+        bus6NotificationMix.profiles.insert(bus6NotificationMix.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus6NotificationMix);
+        c.routes.push_back(createRoute({bus6NotificationMix}, bus6NotificationOutDevice));
+                
+        // bus7: system sound output
+        AudioPort bus7SystemSoundMix =
+                createPort(c.nextPortId++, "mixport_bus7_system_sound_out", 0, false,
+                                createPortMixExt(1, 1));
+        bus7SystemSoundMix.profiles.insert(bus7SystemSoundMix.profiles.begin(),
+                                                standardPcmAudioProfiles.begin(),
+                                                standardPcmAudioProfiles.end());
+        c.ports.push_back(bus7SystemSoundMix);
+        c.routes.push_back(createRoute({bus7SystemSoundMix}, bus7SystemSoundOutDevice));
 
         c.routes.push_back(createRoute({primaryOutMix}, speakerOutDevice));
         c.routes.push_back(createRoute({micInDevice}, primaryInMix));
@@ -514,6 +674,7 @@ std::unique_ptr<Configuration> getUsbConfiguration() {
                                 AudioChannelLayout::LAYOUT_MONO,
                                 AudioChannelLayout::LAYOUT_STEREO,
                                 AudioChannelLayout::LAYOUT_5POINT1,
+                                AudioChannelLayout::LAYOUT_7POINT1,
                                 AudioChannelLayout::INDEX_MASK_1,
                                 AudioChannelLayout::INDEX_MASK_2
                         },
@@ -523,6 +684,7 @@ std::unique_ptr<Configuration> getUsbConfiguration() {
                                 AudioChannelLayout::LAYOUT_MONO,
                                 AudioChannelLayout::LAYOUT_STEREO,
                                 AudioChannelLayout::LAYOUT_5POINT1,
+                                AudioChannelLayout::LAYOUT_7POINT1,
                                 AudioChannelLayout::INDEX_MASK_1,
                                 AudioChannelLayout::INDEX_MASK_2
                         },
