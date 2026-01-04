@@ -21,6 +21,7 @@
 #include <limits>
 #include <type_traits>
 #include <cstdio>
+#include <cmath>
 
 #include <android-base/logging.h>
 #include <android-base/parseint.h>
@@ -71,11 +72,8 @@ inline CarGains computeCarGains(float balance, float fader) {
     g.fr = right * front;
     g.rl = left * rear;
     g.rr = right * rear;
-    // Center is typically treated as "front" content.
     g.fc = front;
-    // LFE typically left untouched by balance/fader.
     g.lfe = 1.0f;
-    // Side channels (7.1) are treated as "rear" in a car cabin.
     g.sl = left * rear;
     g.sr = right * rear;
     return g;
@@ -95,11 +93,6 @@ inline T clampCast(float v) {
 template <typename Sample>
 void applyCarBalanceFaderInterleaved(Sample* buf, size_t frames, int channels,
                                      const CarGains& g) {
-    // Android channel orders:
-    // 2ch:  FL FR
-    // 4.0:  FL FR BL BR
-    // 5.1:  FL FR FC LFE BL BR
-    // 7.1:  FL FR FC LFE BL BR SL SR
     for (size_t i = 0; i < frames; ++i) {
         Sample* f = buf + i * channels;
         if (channels >= 2) {
@@ -125,6 +118,13 @@ void applyCarBalanceFaderInterleaved(Sample* buf, size_t frames, int channels,
     }
 }
 
+template <typename Sample>
+void applyGainInterleaved(Sample* buf, size_t frames, int channels, float gainLinear) {
+    for (size_t i = 0; i < frames * channels; ++i) {
+        buf[i] = clampCast<Sample>(static_cast<float>(buf[i]) * gainLinear);
+    }
+}
+
 void applyCarBalanceFader(void* buffer, size_t frames, const pcm_config& cfg) {
     const int ch = cfg.channels;
     if (!(ch == 2 || ch == 4 || ch == 6 || ch == 8)) return;
@@ -145,7 +145,33 @@ void applyCarBalanceFader(void* buffer, size_t frames, const pcm_config& cfg) {
             applyCarBalanceFaderInterleaved<float>(static_cast<float*>(buffer), frames, ch, g);
             break;
         default:
-            // Unsupported format: do nothing.
+            break;
+    }
+}
+
+void applyBusVolume(void* buffer, size_t frames, const pcm_config& cfg, float gainDb) {
+    // 0dB means no change. -inf means silence.
+    if (gainDb > -0.01f && gainDb < 0.01f) return;
+
+    // Convert dB to linear scalar: 10 ^ (db / 20)
+    // If gainDb is very low (e.g. -100), treat as mute
+    float gainLinear = 0.0f;
+    if (gainDb > -90.0f) {
+        gainLinear = std::pow(10.0f, gainDb / 20.0f);
+    }
+
+    const int ch = cfg.channels;
+    switch (cfg.format) {
+        case PCM_FORMAT_S16_LE:
+            applyGainInterleaved<int16_t>(static_cast<int16_t*>(buffer), frames, ch, gainLinear);
+            break;
+        case PCM_FORMAT_S32_LE:
+            applyGainInterleaved<int32_t>(static_cast<int32_t*>(buffer), frames, ch, gainLinear);
+            break;
+        case PCM_FORMAT_FLOAT_LE:
+            applyGainInterleaved<float>(static_cast<float*>(buffer), frames, ch, gainLinear);
+            break;
+        default:
             break;
     }
 }
@@ -182,8 +208,6 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     return isStubStreamOnWorker() ? mStubDriver.standby() : StreamAlsa::standby();
 }
 
-// In core-impl/StreamPrimary.cpp
-
 ::android::status_t StreamPrimary::start() {
     bool isStub = true, shutdownAlsaStream = false;
     {
@@ -201,11 +225,8 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     }
 
     // --- SMART CONFIGURATION FIX ---
-
-    // 1. Calculate actual channels from the context layout
-    int actualChannels = 2; // Default
+    int actualChannels = 2;
     auto layout = mContext.getChannelLayout();
-    
     using Tag = aidl::android::media::audio::common::AudioChannelLayout::Tag;
     switch (layout.getTag()) {
         case Tag::layoutMask:
@@ -222,13 +243,10 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
             break;
     }
 
-    // 2. Load properties or fallback to USB defaults (1024/4)
-    // This restores your ability to tune via build.prop
     int periodSize = ::android::base::GetIntProperty("ro.vendor.audio.period_size", 1024);
     int periodCount = ::android::base::GetIntProperty("ro.vendor.audio.period_count", 4);
 
     auto& mutableConfig = const_cast<std::optional<struct pcm_config>&>(mConfig);
-
     if (!mutableConfig.has_value()) {
         mutableConfig = pcm_config{};
     }
@@ -236,12 +254,8 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     mutableConfig->channels = actualChannels; 
     mutableConfig->rate = 48000;
     mutableConfig->format = PCM_FORMAT_S16_LE;
-
-    // Apply the Configurable Values
     mutableConfig->period_size = periodSize;
     mutableConfig->period_count = periodCount;
-    
-    // Calculate thresholds based on the configured size
     mutableConfig->start_threshold = periodSize * 2; 
     mutableConfig->stop_threshold = periodSize * periodCount;
     mutableConfig->silence_threshold = 0;
@@ -256,18 +270,20 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     return ::android::OK;
 }
 
-// Fixed transfer function: Eliminates Emulator sleep logic and forces ALSA write
 ::android::status_t StreamPrimary::transfer(void* buffer, size_t frameCount,
                                             size_t* actualFrameCount, int32_t* latencyMs) {
     if (isStubStreamOnWorker()) {
         return mStubDriver.transfer(buffer, frameCount, actualFrameCount, latencyMs);
     }
-    // This is a workaround for the emulator implementation which has a host-side buffer
-    // and is not being able to achieve real-time behavior similar to ADSPs (b/302587331).
     if (!mSkipNextTransfer) {
         if (!mIsInput && mConfig.has_value()) {
-            // Apply automotive balance/fader before handing audio to the ALSA pipeline.
-            // This preserves discrete routing for 4.0/5.1/7.1 outputs.
+            // 1. Apply Volume Gain (Software Mixer) if bus address is known
+            if (!mBusAddress.empty()) {
+                float gainDb = primary::PrimaryMixer::getBusGain(mBusAddress);
+                applyBusVolume(buffer, frameCount, mConfig.value(), gainDb);
+            }
+
+            // 2. Apply Balance/Fader
             applyCarBalanceFader(buffer, frameCount, mConfig.value());
         }
         RETURN_STATUS_IF_ERROR(
@@ -301,8 +317,6 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
 }
 
 ::android::status_t StreamPrimary::refinePosition(StreamDescriptor::Position*) {
-    // Since not all data is actually sent to the HAL, use the position maintained by Stream class
-    // which accounts for all frames passed from / to the client.
     return ::android::OK;
 }
 
@@ -322,6 +336,20 @@ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& de
         const bool useStubDriver = devices.empty() || useStubStream(mIsInput, devices[0]);
         std::lock_guard l(mLock);
         mAlsaDeviceId = useStubDriver ? kStubDeviceId : getCardAndDeviceId(devices);
+        
+        // --- Capture Bus Address for Volume Control ---
+        mBusAddress.clear();
+        if (!devices.empty()) {
+             const auto& dev = devices[0];
+             // If the device is an output bus, capture its address (e.g. "bus0_media_out")
+             if (!mIsInput && (dev.type.type == AudioDeviceType::OUT_BUS || 
+                               dev.type.connection == AudioDeviceDescription::CONNECTION_BUS)) {
+                 if (dev.address.getTag() == AudioDeviceAddress::id) {
+                     mBusAddress = dev.address.get<AudioDeviceAddress::id>();
+                     LOG(INFO) << __func__ << ": Stream bound to Bus Address: " << mBusAddress;
+                 }
+             }
+        }
     }
     if (!devices.empty()) {
         auto streamDataProcessor = getContext().getStreamDataProcessor().lock();
@@ -344,13 +372,8 @@ bool StreamPrimary::isStubStream() {
     return mAlsaDeviceId == kStubDeviceId;
 }
 
-// Map logical AAOS BUS outputs to the primary ALSA device.
 StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
         const std::vector<AudioDevice>& devices) {
-    
-    // --- FIX: Force Card 0, Device 0 for Primary ---
-    // Using kDefaultCardAndDeviceId is risky if it defaults to -1.
-    // We hardcode this to {0, 0} because we know your USB DAC is at Card 0.
     const AlsaDeviceId primaryOut{0, 0}; 
 
     if (devices.empty()) {
@@ -358,7 +381,6 @@ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
     }
     const AudioDevice& dev = devices[0];
     
-    // If the device is a BUS output (type or connection), map to primary
     if (dev.type.type == AudioDeviceType::OUT_BUS ||
         dev.type.connection == AudioDeviceDescription::CONNECTION_BUS) {
         
@@ -372,7 +394,6 @@ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
         return primaryOut;
     }
     
-    // Parse explicit "CARD_x_DEV_y" overrides (keep existing logic)
     if (dev.address.getTag() == AudioDeviceAddress::id) {
         std::string deviceAddress = dev.address.get<AudioDeviceAddress::id>();
         AlsaDeviceId cardAndDeviceId;
@@ -386,7 +407,6 @@ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
             return cardAndDeviceId;
         }
     }
-    // Fallback to primary
     return primaryOut;
 }
 
@@ -440,8 +460,6 @@ ndk::ScopedAStatus StreamInPrimary::setHwGain(const std::vector<float>& in_chann
     }
     float gain;
     RETURN_STATUS_IF_ERROR(primary::PrimaryMixer::getInstance().getMicGain(&gain));
-    // Due to rounding errors, round trip conversions between percents and indexed values may not
-    // match.
     if (gain != in_channelGains[0]) {
         LOG(WARNING) << __func__ << ": unmatched gain: set: " << in_channelGains[0]
                      << ", from mixer: " << gain;
@@ -481,8 +499,6 @@ ndk::ScopedAStatus StreamOutPrimary::setHwVolume(const std::vector<float>& in_ch
     }
     std::vector<float> volumes;
     RETURN_STATUS_IF_ERROR(primary::PrimaryMixer::getInstance().getVolumes(&volumes));
-    // Due to rounding errors, round trip conversions between percents and indexed values may not
-    // match.
     if (volumes != in_channelVolumes) {
         LOG(WARNING) << __func__ << ": unmatched volumes: set: "
                      << ::android::internal::ToString(in_channelVolumes)

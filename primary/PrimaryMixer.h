@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,6 +17,8 @@
 #pragma once
 
 #include <atomic>
+#include <map>
+#include <mutex>
 #include <string>
 
 #include "alsa/Mixer.h"
@@ -43,11 +45,19 @@ class PrimaryMixer : public alsa::Mixer {
     static float getBalance();
     static float getFader();
 
+    // Automotive Bus Volume controls
+    // Sets the gain in Decibels (dB) for a specific bus address (e.g., "bus0_media_out")
+    static void setBusGain(const std::string& address, float gainDb);
+    static float getBusGain(const std::string& address);
+
   private:
     PrimaryMixer();
 
     std::atomic<float> mBalance{0.0f};
     std::atomic<float> mFader{0.0f};
+
+    std::mutex mLock;
+    std::map<std::string, float> mBusGains; // Address -> Gain in dB
 };
 
 }  // namespace aidl::android::hardware::audio::core::primary

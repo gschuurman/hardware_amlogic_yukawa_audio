@@ -73,7 +73,6 @@ int PrimaryMixer::findAlsaCardByName(const std::string& cardName) {
 
 // static
 int PrimaryMixer::getAlsaCard() {
-    // First, try to find card by name if specified
     std::string cardName = ::android::base::GetProperty(
         "persist.vendor.audio.primary.card_name", "");
 
@@ -87,13 +86,8 @@ int PrimaryMixer::getAlsaCard() {
         LOG(WARNING) << __func__ << ": Card name '" << cardName
                      << "' not found, falling back to card index";
     }
-
-    // Fall back to card index from property
-    int card = ::android::base::GetIntProperty("persist.vendor.audio.primary.card",
+    return ::android::base::GetIntProperty("persist.vendor.audio.primary.card",
                                                 kDefaultAlsaCard);
-    LOG(DEBUG) << __func__ << ": Using ALSA card " << card
-               << " (from persist.vendor.audio.primary.card)";
-    return card;
 }
 
 // static
@@ -135,6 +129,27 @@ float PrimaryMixer::getBalance() {
 // static
 float PrimaryMixer::getFader() {
     return getInstance().mFader.load();
+}
+
+// static
+void PrimaryMixer::setBusGain(const std::string& address, float gainDb) {
+    if (address.empty()) return;
+    auto& instance = getInstance();
+    std::lock_guard<std::mutex> lock(instance.mLock);
+    instance.mBusGains[address] = gainDb;
+    LOG(DEBUG) << "PrimaryMixer: Stored gain " << gainDb << "dB for bus " << address;
+}
+
+// static
+float PrimaryMixer::getBusGain(const std::string& address) {
+    if (address.empty()) return 0.0f;
+    auto& instance = getInstance();
+    std::lock_guard<std::mutex> lock(instance.mLock);
+    auto it = instance.mBusGains.find(address);
+    if (it != instance.mBusGains.end()) {
+        return it->second;
+    }
+    return 0.0f; // Default 0dB
 }
 
 }  // namespace aidl::android::hardware::audio::core::primary

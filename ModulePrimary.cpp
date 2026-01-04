@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,6 +15,7 @@
  */
 
 #include <vector>
+#include <cmath>
 
 #include <android/binder_parcelable_utils.h>
 
@@ -37,6 +38,7 @@ using aidl::android::hardware::audio::common::hasMmapFlag;
 using aidl::android::hardware::audio::common::SinkMetadata;
 using aidl::android::hardware::audio::common::SourceMetadata;
 using aidl::android::hardware::audio::core::StreamDescriptor;
+using aidl::android::media::audio::common::AudioDeviceAddress;
 using aidl::android::media::audio::common::AudioInputFlags;
 using aidl::android::media::audio::common::AudioIoFlags;
 using aidl::android::media::audio::common::AudioOffloadInfo;
@@ -61,6 +63,11 @@ inline bool isCarParam(const std::string& id) {
     return id == kCarBalanceId || id == kCarFaderId;
 }
 
+// Helper to detect bus volume parameters (e.g. "bus0_media_out")
+inline bool isBusParam(const std::string& id) {
+    return id.find("bus") == 0;
+}
+
 inline bool readFloatParam(const VendorParameter& p, float* out) {
     std::optional<::aidl::android::media::audio::common::Float> f;
     const binder_status_t st = p.ext.getParcelable(&f);
@@ -74,8 +81,6 @@ inline bool readFloatParam(const VendorParameter& p, float* out) {
 }
 
 inline void writeFloatParam(VendorParameter* p, float v) {
-    // Ignore returned binder_status_t here; failure would be unexpected and logged by binder internals,
-    // but you can add explicit logging if you want.
     (void)p->ext.setParcelable(::aidl::android::media::audio::common::Float{v});
 }
 
@@ -118,6 +123,12 @@ ndk::ScopedAStatus ModulePrimary::getVendorParameters(
             p.id = id;
             writeFloatParam(&p, mCarFader.load(std::memory_order_relaxed));
             _aidl_return->push_back(std::move(p));
+        } else if (isBusParam(id)) {
+            VendorParameter p;
+            p.id = id;
+            float val = primary::PrimaryMixer::getBusGain(id);
+            writeFloatParam(&p, val);
+            _aidl_return->push_back(std::move(p));
         } else {
             passthrough.push_back(id);
         }
@@ -151,6 +162,7 @@ ndk::ScopedAStatus ModulePrimary::setVendorParameters(
             }
             const float v = std::clamp(raw, -1.0f, 1.0f);
             mCarBalance.store(v, std::memory_order_relaxed);
+            primary::PrimaryMixer::setBalance(v);
         } else if (p.id == kCarFaderId) {
             float raw = 0.0f;
             if (!readFloatParam(p, &raw)) {
@@ -158,18 +170,64 @@ ndk::ScopedAStatus ModulePrimary::setVendorParameters(
             }
             const float v = std::clamp(raw, -1.0f, 1.0f);
             mCarFader.store(v, std::memory_order_relaxed);
+            primary::PrimaryMixer::setFader(v);
+        } else if (isBusParam(p.id)) {
+            float raw = 0.0f;
+            if (readFloatParam(p, &raw)) {
+                 primary::PrimaryMixer::setBusGain(p.id, raw);
+            } else {
+                LOG(ERROR) << "ModulePrimary: Failed to read float for bus param: " << p.id;
+            }
         } else {
             passthrough.push_back(p);
         }
     }
 
-    // Delegate unknown params to base Module (vendor debug, clip transition, etc.)
     if (!passthrough.empty()) {
         auto status = Module::setVendorParameters(passthrough, in_async);
         if (!status.isOk()) return status;
     }
 
     return ndk::ScopedAStatus::ok();
+}
+
+// [FIX] Intercept setAudioPortConfig to handle Quick Settings volume (Hardware Volume)
+ndk::ScopedAStatus ModulePrimary::setAudioPortConfig(
+        const AudioPortConfig& in_requested,
+        AudioPortConfig* out_suggested,
+        bool* _aidl_return) {
+    
+    // 1. Let the base module handle the logic (finding port, creating config, applying to streams)
+    auto status = Module::setAudioPortConfig(in_requested, out_suggested, _aidl_return);
+    
+    // 2. If successful and a change occurred, check for Gain updates
+    if (status.isOk() && _aidl_return && *(_aidl_return)) {
+        // Use the output 'out_suggested' which contains the fully merged configuration
+        if (out_suggested->gain.has_value() && 
+            out_suggested->ext.getTag() == AudioPortExt::Tag::device) {
+            
+            const auto& gainConfig = out_suggested->gain.value();
+            const auto& deviceExt = out_suggested->ext.get<AudioPortExt::Tag::device>();
+
+            // Check if this is a bus device (address matches "bus...")
+            if (deviceExt.device.address.getTag() == AudioDeviceAddress::id) {
+                std::string busAddress = deviceExt.device.address.get<AudioDeviceAddress::id>();
+                
+                if (!busAddress.empty() && !gainConfig.values.empty()) {
+                    // Framework sends gain in Millibels (mB)
+                    int gainMb = gainConfig.values[0];
+                    float gainDb = gainMb / 100.0f;
+
+                    LOG(INFO) << "ModulePrimary: setAudioPortConfig captured volume for " 
+                              << busAddress << ": " << gainDb << "dB (" << gainMb << "mB)";
+                    
+                    // Unified Control: Update the same mixer used by AudioControl
+                    primary::PrimaryMixer::setBusGain(busAddress, gainDb);
+                }
+            }
+        }
+    }
+    return status;
 }
 
 ndk::ScopedAStatus ModulePrimary::getTelephony(std::shared_ptr<ITelephony>* _aidl_return) {
@@ -198,7 +256,6 @@ ndk::ScopedAStatus ModulePrimary::createInputStream(StreamContext&& context,
                                                     const std::vector<MicrophoneInfo>& microphones,
                                                     std::shared_ptr<StreamIn>* result) {
     if (context.isMmap()) {
-        // "Stub" is used because there is no support for MMAP audio I/O on CVD.
         return createStreamInstance<StreamInMmapStub>(result, std::move(context), sinkMetadata,
                                                       microphones);
     }
@@ -210,15 +267,11 @@ ndk::ScopedAStatus ModulePrimary::createOutputStream(
         StreamContext&& context, const SourceMetadata& sourceMetadata,
         const std::optional<AudioOffloadInfo>& offloadInfo, std::shared_ptr<StreamOut>* result) {
     if (context.isMmap()) {
-        // "Stub" is used because there is no support for MMAP audio I/O on CVD.
         return createStreamInstance<StreamOutMmapStub>(result, std::move(context), sourceMetadata,
                                                        offloadInfo);
     } else if (areAllBitPositionFlagsSet(
                        context.getFlags().get<AudioIoFlags::output>(),
                        {AudioOutputFlags::COMPRESS_OFFLOAD, AudioOutputFlags::NON_BLOCKING})) {
-        // "Stub" is used because there is no actual decoder. The stream just
-        // extracts the clip duration from the media file header and simulates
-        // playback over time.
         return createStreamInstance<StreamOutOffloadStub>(result, std::move(context),
                                                           sourceMetadata, offloadInfo);
     }
@@ -230,9 +283,6 @@ ndk::ScopedAStatus ModulePrimary::createMmapBuffer(const AudioPortConfig& portCo
                                                    int32_t bufferSizeFrames, int32_t frameSizeBytes,
                                                    MmapBufferDescriptor* desc) {
     const size_t bufferSizeBytes = static_cast<size_t>(bufferSizeFrames) * frameSizeBytes;
-    // The actual mmap buffer for I/O is created after the stream exits standby, via
-    // 'IStreamCommon.createMmapBuffer'. But we must return a valid file descriptor here because
-    // 'MmapBufferDescriptor' can not contain a "null" fd.
     const std::string regionName =
             std::string("mmap-sim-o-") +
             std::to_string(portConfig.ext.get<AudioPortExt::Tag::mix>().handle);
@@ -252,9 +302,6 @@ ndk::ScopedAStatus ModulePrimary::createMmapBuffer(const AudioPortConfig& portCo
 
 int32_t ModulePrimary::getNominalLatencyMs(const AudioPortConfig& portConfig) {
     static constexpr int32_t kLowLatencyMs = 5;
-    // 85 ms is chosen considering 4096 frames @ 48 kHz. This is the value which allows
-    // the virtual Android device implementation to pass CTS. Hardware implementations
-    // should have significantly lower latency.
     static constexpr int32_t kStandardLatencyMs = 85;
     return hasMmapFlag(portConfig.flags.value()) ? kLowLatencyMs : kStandardLatencyMs;
 }
