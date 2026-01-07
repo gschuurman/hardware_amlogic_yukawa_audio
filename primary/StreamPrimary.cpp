@@ -91,6 +91,52 @@ inline T clampCast(float v) {
 }
 
 template <typename Sample>
+void applySmartMirroringInterleaved(Sample* buf, size_t frames, int channels) {
+    // 5.1 Channel Mapping (Standard Android/ALSA):
+    // Index 0: FL
+    // Index 1: FR
+    // Index 2: Center
+    // Index 3: LFE
+    // Index 4: RL  <-- We want to fill this
+    // Index 5: RR  <-- And this
+    
+    if (channels != 6) return;
+
+    for (size_t i = 0; i < frames; ++i) {
+        Sample* f = buf + i * channels;
+        
+        // Check if Rear channels are silent (or near silent)
+        // This ensures we don't overwrite real 5.1 content (like a movie)
+        // but we DO upmix YouTube/Spotify stereo music.
+        if (f[4] == 0 && f[5] == 0) {
+            f[4] = f[0]; // Copy Front Left to Rear Left
+            f[5] = f[1]; // Copy Front Right to Rear Right
+        }
+    }
+}
+
+void applySmartMirroring(void* buffer, size_t frames, const pcm_config& cfg) {
+    if (cfg.channels != 6) return;
+
+    switch (cfg.format) {
+        case PCM_FORMAT_S16_LE:
+            applySmartMirroringInterleaved<int16_t>(
+                static_cast<int16_t*>(buffer), frames, cfg.channels);
+            break;
+        case PCM_FORMAT_S32_LE:
+            applySmartMirroringInterleaved<int32_t>(
+                static_cast<int32_t*>(buffer), frames, cfg.channels);
+            break;
+        case PCM_FORMAT_FLOAT_LE:
+            applySmartMirroringInterleaved<float>(
+                static_cast<float*>(buffer), frames, cfg.channels);
+            break;
+        default:
+            break;
+    }
+}
+
+template <typename Sample>
 void applyCarBalanceFaderInterleaved(Sample* buf, size_t frames, int channels,
                                      const CarGains& g) {
     for (size_t i = 0; i < frames; ++i) {
@@ -282,6 +328,10 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
                 float gainDb = primary::PrimaryMixer::getBusGain(mBusAddress);
                 applyBusVolume(buffer, frameCount, mConfig.value(), gainDb);
             }
+
+            // [NEW] 1.5 Apply Smart Mirroring (Stereo -> 5.1 Upmix)
+            // This detects if rears are silent and fills them with front audio
+            applySmartMirroring(buffer, frameCount, mConfig.value());
 
             // 2. Apply Balance/Fader
             applyCarBalanceFader(buffer, frameCount, mConfig.value());
