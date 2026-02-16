@@ -414,6 +414,9 @@ class StreamCommonDelegator : public BnStreamCommon {
     explicit StreamCommonDelegator(const std::shared_ptr<StreamCommonInterface>& delegate)
         : mDelegate(delegate) {}
 
+    ndk::ScopedAStatus createMmapBuffer(
+            ::aidl::android::hardware::audio::core::MmapBufferDescriptor* _aidl_return) override;
+    
   private:
     ndk::ScopedAStatus close() override {
         auto delegate = mDelegate.lock();
