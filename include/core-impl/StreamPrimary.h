@@ -59,6 +59,12 @@ class StreamPrimary : public StreamAlsa {
     // --- Added for Bus Volume Control ---
     std::string mBusAddress;
 
+    // --- Native radio: FM tuner input is captured from the snd-aloop "Loopback" card
+    // (the RTL-SDR HAL writes decoded PCM to the loopback playback side). When set,
+    // getDeviceProfiles() opens the Loopback capture instead of the name-resolved
+    // primary card. See StreamPrimary.cpp. ---
+    bool mIsFmTunerInput = false;
+
   private:
     using AlsaDeviceId = std::pair<int, int>;
 

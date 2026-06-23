@@ -389,15 +389,22 @@ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& de
         
         // --- Capture Bus Address for Volume Control ---
         mBusAddress.clear();
+        mIsFmTunerInput = false;
         if (!devices.empty()) {
              const auto& dev = devices[0];
              // If the device is an output bus, capture its address (e.g. "bus0_media_out")
-             if (!mIsInput && (dev.type.type == AudioDeviceType::OUT_BUS || 
+             if (!mIsInput && (dev.type.type == AudioDeviceType::OUT_BUS ||
                                dev.type.connection == AudioDeviceDescription::CONNECTION_BUS)) {
                  if (dev.address.getTag() == AudioDeviceAddress::id) {
                      mBusAddress = dev.address.get<AudioDeviceAddress::id>();
                      LOG(INFO) << __func__ << ": Stream bound to Bus Address: " << mBusAddress;
                  }
+             }
+             // Native radio: the FM tuner input is fed by the RTL-SDR HAL via snd-aloop,
+             // so it must capture from the Loopback card (handled in getDeviceProfiles).
+             if (mIsInput && dev.type.type == AudioDeviceType::IN_FM_TUNER) {
+                 mIsFmTunerInput = true;
+                 LOG(INFO) << __func__ << ": FM tuner input -> snd-aloop Loopback capture";
              }
         }
     }
@@ -411,6 +418,20 @@ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& de
 }
 
 std::vector<alsa::DeviceProfile> StreamPrimary::getDeviceProfiles() {
+    // Native radio: the FM tuner input captures the PCM the RTL-SDR HAL plays into the
+    // snd-aloop "Loopback" card. snd-aloop mirrors device 0 playback <-> device 1 capture,
+    // so the radio daemon writes hw:Loopback,0,0 and we read hw:Loopback,1,0. Resolve the
+    // card by NAME so the pinned snd_aloop.index value never has to be hard-coded here.
+    if (mIsInput && mIsFmTunerInput) {
+        const int loopCard = primary::PrimaryMixer::findAlsaCardByName("Loopback");
+        if (loopCard == primary::PrimaryMixer::kInvalidAlsaCard) {
+            LOG(ERROR) << __func__ << ": Loopback card not found; FM tuner capture will fail";
+        }
+        return {alsa::DeviceProfile{.card = loopCard,
+                                    .device = 1,
+                                    .direction = PCM_IN,
+                                    .isExternal = false}};
+    }
     return {alsa::DeviceProfile{.card = primary::PrimaryMixer::getAlsaCard(),
                                 .device = primary::PrimaryMixer::getAlsaDevice(),
                                 .direction = mIsInput ? PCM_IN : PCM_OUT,
@@ -468,8 +489,9 @@ bool StreamPrimary::useStubStream(
     static const bool kSimulateOutput =
             GetBoolProperty("ro.boot.audio.tinyalsa.ignore_output", false);
     if (isInput) {
-        return kSimulateInput || device.type.type == AudioDeviceType::IN_TELEPHONY_RX ||
-               device.type.type == AudioDeviceType::IN_FM_TUNER;
+        // IN_FM_TUNER is intentionally NOT stubbed: the native radio path captures real
+        // PCM from the snd-aloop Loopback card (see getDeviceProfiles / mIsFmTunerInput).
+        return kSimulateInput || device.type.type == AudioDeviceType::IN_TELEPHONY_RX;
     }
     return kSimulateOutput || device.type.type == AudioDeviceType::OUT_TELEPHONY_TX;
 }
