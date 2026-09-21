@@ -771,11 +771,6 @@ StreamCommonImpl::~StreamCommonImpl() {
     }
 }
 
-::ndk::ScopedAStatus StreamCommonDelegator::createMmapBuffer(
-        ::aidl::android::hardware::audio::core::MmapBufferDescriptor* /*_aidl_return*/) {
-    return ::ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
-}
-
 ndk::ScopedAStatus StreamCommonImpl::initInstance(
         const std::shared_ptr<StreamCommonInterface>& delegate) {
     mCommon = ndk::SharedRefBase::make<StreamCommonDelegator>(delegate);
@@ -841,6 +836,12 @@ ndk::ScopedAStatus StreamCommonImpl::removeEffect(
     } else {
         LOG(DEBUG) << __func__ << ": effect Binder" << in_effect->asBinder().get();
     }
+    return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+}
+
+ndk::ScopedAStatus StreamCommonImpl::createMmapBuffer(MmapBufferDescriptor* _aidl_return) {
+    LOG(DEBUG) << __func__;
+    (void)_aidl_return;
     return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
 }
 
