@@ -21,6 +21,7 @@
 #include <limits>
 #include <type_traits>
 #include <cstdio>
+#include <unistd.h>
 #include <cmath>
 
 #include <android-base/logging.h>
@@ -265,6 +266,26 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
     }
     if (shutdownAlsaStream) {
         StreamAlsa::shutdown();
+    }
+    if (!isStub) {
+        // The sound card can be absent (e.g. the USB audio interface isn't plugged in). Run this
+        // start on the stub driver instead of failing the stream; the next start re-checks, so a
+        // card plugged in later is picked up.
+        const auto profiles = getDeviceProfiles();
+        for (const auto& profile : profiles) {
+            char path[32];
+            snprintf(path, sizeof(path), "/proc/asound/card%d", profile.card);
+            if (profile.card < 0 || access(path, F_OK) != 0) {
+                LOG(WARNING) << __func__ << ": ALSA card " << profile.card
+                             << " not present, using the stub driver";
+                isStub = true;
+                if (mCurrAlsaDeviceId != kStubDeviceId) {
+                    StreamAlsa::shutdown();  // Drop proxies of a card that has gone away.
+                }
+                mCurrAlsaDeviceId = kStubDeviceId;
+                break;
+            }
+        }
     }
     if (isStub) {
         return mStubDriver.start();
