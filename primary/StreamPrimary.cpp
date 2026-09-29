@@ -350,6 +350,9 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
                 applyBusVolume(buffer, frameCount, mConfig.value(), gainDb);
             }
 
+            // 1.2 Apply the automotive equalizer
+            mEqualizer.process(buffer, frameCount, mConfig.value());
+
             // [NEW] 1.5 Apply Smart Mirroring (Stereo -> 5.1 Upmix)
             // This detects if rears are silent and fills them with front audio
             applySmartMirroring(buffer, frameCount, mConfig.value());

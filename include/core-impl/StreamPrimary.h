@@ -24,6 +24,7 @@
 
 #include "DriverStubImpl.h"
 #include "StreamAlsa.h"
+#include "primary/CarEqualizer.h"
 #include "primary/PrimaryMixer.h"
 
 namespace aidl::android::hardware::audio::core {
@@ -64,6 +65,9 @@ class StreamPrimary : public StreamAlsa {
     // getDeviceProfiles() opens the Loopback capture instead of the name-resolved
     // primary card. See StreamPrimary.cpp. ---
     bool mIsFmTunerInput = false;
+
+    // Automotive equalizer state for this output stream (worker thread only).
+    primary::CarEqualizer mEqualizer;
 
   private:
     using AlsaDeviceId = std::pair<int, int>;

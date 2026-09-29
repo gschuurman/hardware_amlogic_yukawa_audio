@@ -80,6 +80,7 @@ cc_library {
         "bluetooth/ModuleBluetooth.cpp",
         "bluetooth/StreamBluetooth.cpp",
         "deprecated/StreamSwitcher.cpp",
+        "primary/CarEqualizer.cpp",
         "primary/PrimaryMixer.cpp",
         "primary/StreamPrimary.cpp",
         "r_submix/ModuleRemoteSubmix.cpp",

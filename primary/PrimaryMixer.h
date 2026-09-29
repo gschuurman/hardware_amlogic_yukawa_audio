@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -45,6 +46,19 @@ class PrimaryMixer : public alsa::Mixer {
     static float getBalance();
     static float getFader();
 
+    // Automotive equalizer: kEqBands peaking bands at kEqFrequenciesHz, gains
+    // in dB within +/-kEqMaxGainDb. Applied per stream by CarEqualizer.
+    static constexpr int kEqBands = 5;
+    static constexpr std::array<float, kEqBands> kEqFrequenciesHz = {60.0f, 250.0f, 1000.0f,
+                                                                      4000.0f, 12000.0f};
+    static constexpr float kEqMaxGainDb = 12.0f;
+    static void setEqEnabled(bool enabled);
+    static bool getEqEnabled();
+    static void setEqBandGain(int band, float gainDb);
+    static float getEqBandGain(int band);
+    // Incremented on every EQ change, so streams know when to recompute filters.
+    static uint32_t getEqGeneration();
+
     // Automotive Bus Volume controls
     // Sets the gain in Decibels (dB) for a specific bus address (e.g., "bus0_media_out")
     static void setBusGain(const std::string& address, float gainDb);
@@ -53,8 +67,16 @@ class PrimaryMixer : public alsa::Mixer {
   private:
     PrimaryMixer();
 
+    // Balance, fader and EQ are kept in persist.vendor.audio.car.* so they
+    // survive a reboot and apply from the first sound on.
+    void loadCarSettings();
+    static void persistCarSetting(const std::string& name, float value);
+
     std::atomic<float> mBalance{0.0f};
     std::atomic<float> mFader{0.0f};
+    std::atomic<bool> mEqEnabled{false};
+    std::array<std::atomic<float>, kEqBands> mEqGainDb{};
+    std::atomic<uint32_t> mEqGeneration{0};
 
     std::mutex mLock;
     std::map<std::string, float> mBusGains; // Address -> Gain in dB

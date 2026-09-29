@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <regex>
 
@@ -103,6 +105,44 @@ int PrimaryMixer::getAlsaDevice() {
 PrimaryMixer::PrimaryMixer() : alsa::Mixer(getAlsaCard()) {
     LOG(INFO) << "PrimaryMixer initialized with card=" << getAlsaCard()
               << " device=" << getAlsaDevice();
+    loadCarSettings();
+}
+
+namespace {
+
+const std::string kCarSettingPrefix = "persist.vendor.audio.car.";
+
+float readCarSetting(const std::string& name, float min, float max) {
+    const std::string value = ::android::base::GetProperty(kCarSettingPrefix + name, "");
+    if (value.empty()) return 0.0f;
+    char* end = nullptr;
+    const float v = std::strtof(value.c_str(), &end);
+    if (end == value.c_str() || !std::isfinite(v)) return 0.0f;
+    return std::clamp(v, min, max);
+}
+
+std::string eqBandSettingName(int band) {
+    return "eq_band" + std::to_string(band);
+}
+
+}  // namespace
+
+void PrimaryMixer::loadCarSettings() {
+    mBalance.store(readCarSetting("balance", -1.0f, 1.0f));
+    mFader.store(readCarSetting("fader", -1.0f, 1.0f));
+    mEqEnabled.store(readCarSetting("eq_enabled", 0.0f, 1.0f) != 0.0f);
+    for (int band = 0; band < kEqBands; ++band) {
+        mEqGainDb[band].store(readCarSetting(eqBandSettingName(band), -kEqMaxGainDb, kEqMaxGainDb));
+    }
+    LOG(INFO) << "Car audio settings: balance=" << mBalance.load() << " fader=" << mFader.load()
+              << " eq=" << (mEqEnabled.load() ? "on" : "off");
+}
+
+// static
+void PrimaryMixer::persistCarSetting(const std::string& name, float value) {
+    if (!::android::base::SetProperty(kCarSettingPrefix + name, std::to_string(value))) {
+        LOG(WARNING) << "Could not persist " << kCarSettingPrefix << name;
+    }
 }
 
 // static
@@ -113,12 +153,50 @@ PrimaryMixer& PrimaryMixer::getInstance() {
 
 // static
 void PrimaryMixer::setBalance(float balance) {
-    getInstance().mBalance.store(std::clamp(balance, -1.0f, 1.0f));
+    balance = std::clamp(balance, -1.0f, 1.0f);
+    getInstance().mBalance.store(balance);
+    persistCarSetting("balance", balance);
 }
 
 // static
 void PrimaryMixer::setFader(float fader) {
-    getInstance().mFader.store(std::clamp(fader, -1.0f, 1.0f));
+    fader = std::clamp(fader, -1.0f, 1.0f);
+    getInstance().mFader.store(fader);
+    persistCarSetting("fader", fader);
+}
+
+// static
+void PrimaryMixer::setEqEnabled(bool enabled) {
+    auto& instance = getInstance();
+    instance.mEqEnabled.store(enabled);
+    instance.mEqGeneration.fetch_add(1);
+    persistCarSetting("eq_enabled", enabled ? 1.0f : 0.0f);
+}
+
+// static
+bool PrimaryMixer::getEqEnabled() {
+    return getInstance().mEqEnabled.load();
+}
+
+// static
+void PrimaryMixer::setEqBandGain(int band, float gainDb) {
+    if (band < 0 || band >= kEqBands) return;
+    gainDb = std::clamp(gainDb, -kEqMaxGainDb, kEqMaxGainDb);
+    auto& instance = getInstance();
+    instance.mEqGainDb[band].store(gainDb);
+    instance.mEqGeneration.fetch_add(1);
+    persistCarSetting(eqBandSettingName(band), gainDb);
+}
+
+// static
+float PrimaryMixer::getEqBandGain(int band) {
+    if (band < 0 || band >= kEqBands) return 0.0f;
+    return getInstance().mEqGainDb[band].load();
+}
+
+// static
+uint32_t PrimaryMixer::getEqGeneration() {
+    return getInstance().mEqGeneration.load();
 }
 
 // static

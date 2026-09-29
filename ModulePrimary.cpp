@@ -59,8 +59,19 @@ namespace {
 const std::string kCarBalanceId = "car.balance";
 const std::string kCarFaderId = "car.fader";
 
+// Equalizer: "car.eq.enabled" (0/1) and "car.eq.band<N>" (gain in dB).
+const std::string kCarEqEnabledId = "car.eq.enabled";
+const std::string kCarEqBandPrefix = "car.eq.band";
+
+// Returns the band index of a "car.eq.band<N>" id, or -1.
+inline int carEqBand(const std::string& id) {
+    if (id.rfind(kCarEqBandPrefix, 0) != 0 || id.size() != kCarEqBandPrefix.size() + 1) return -1;
+    const int band = id.back() - '0';
+    return (band >= 0 && band < primary::PrimaryMixer::kEqBands) ? band : -1;
+}
+
 inline bool isCarParam(const std::string& id) {
-    return id == kCarBalanceId || id == kCarFaderId;
+    return id == kCarBalanceId || id == kCarFaderId || id == kCarEqEnabledId || carEqBand(id) >= 0;
 }
 
 // Helper to detect bus volume parameters (e.g. "bus0_media_out")
@@ -113,15 +124,20 @@ ndk::ScopedAStatus ModulePrimary::getVendorParameters(
     passthrough.reserve(in_ids.size());
 
     for (const auto& id : in_ids) {
-        if (id == kCarBalanceId) {
+        if (isCarParam(id)) {
+            float value = 0.0f;
+            if (id == kCarBalanceId) {
+                value = primary::PrimaryMixer::getBalance();
+            } else if (id == kCarFaderId) {
+                value = primary::PrimaryMixer::getFader();
+            } else if (id == kCarEqEnabledId) {
+                value = primary::PrimaryMixer::getEqEnabled() ? 1.0f : 0.0f;
+            } else {
+                value = primary::PrimaryMixer::getEqBandGain(carEqBand(id));
+            }
             VendorParameter p;
             p.id = id;
-            writeFloatParam(&p, mCarBalance.load(std::memory_order_relaxed));
-            _aidl_return->push_back(std::move(p));
-        } else if (id == kCarFaderId) {
-            VendorParameter p;
-            p.id = id;
-            writeFloatParam(&p, mCarFader.load(std::memory_order_relaxed));
+            writeFloatParam(&p, value);
             _aidl_return->push_back(std::move(p));
         } else if (isBusParam(id)) {
             VendorParameter p;
@@ -155,22 +171,20 @@ ndk::ScopedAStatus ModulePrimary::setVendorParameters(
     passthrough.reserve(in_parameters.size());
 
     for (const auto& p : in_parameters) {
-        if (p.id == kCarBalanceId) {
+        if (isCarParam(p.id)) {
             float raw = 0.0f;
-            if (!readFloatParam(p, &raw)) {
+            if (!readFloatParam(p, &raw) || !std::isfinite(raw)) {
                 return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
             }
-            const float v = std::clamp(raw, -1.0f, 1.0f);
-            mCarBalance.store(v, std::memory_order_relaxed);
-            primary::PrimaryMixer::setBalance(v);
-        } else if (p.id == kCarFaderId) {
-            float raw = 0.0f;
-            if (!readFloatParam(p, &raw)) {
-                return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
+            if (p.id == kCarBalanceId) {
+                primary::PrimaryMixer::setBalance(raw);
+            } else if (p.id == kCarFaderId) {
+                primary::PrimaryMixer::setFader(raw);
+            } else if (p.id == kCarEqEnabledId) {
+                primary::PrimaryMixer::setEqEnabled(raw != 0.0f);
+            } else {
+                primary::PrimaryMixer::setEqBandGain(carEqBand(p.id), raw);
             }
-            const float v = std::clamp(raw, -1.0f, 1.0f);
-            mCarFader.store(v, std::memory_order_relaxed);
-            primary::PrimaryMixer::setFader(v);
         } else if (isBusParam(p.id)) {
             float raw = 0.0f;
             if (readFloatParam(p, &raw)) {
