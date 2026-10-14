@@ -59,8 +59,9 @@ namespace {
 const std::string kCarBalanceId = "car.balance";
 const std::string kCarFaderId = "car.fader";
 
-// Equalizer: "car.eq.enabled" (0/1) and "car.eq.band<N>" (gain in dB).
+// Equalizer: "car.eq.enabled" (0/1), "car.eq.preamp" and "car.eq.band<N>" (gains in dB).
 const std::string kCarEqEnabledId = "car.eq.enabled";
+const std::string kCarEqPreampId = "car.eq.preamp";
 const std::string kCarEqBandPrefix = "car.eq.band";
 
 // Returns the band index of a "car.eq.band<N>" id, or -1.
@@ -71,7 +72,8 @@ inline int carEqBand(const std::string& id) {
 }
 
 inline bool isCarParam(const std::string& id) {
-    return id == kCarBalanceId || id == kCarFaderId || id == kCarEqEnabledId || carEqBand(id) >= 0;
+    return id == kCarBalanceId || id == kCarFaderId || id == kCarEqEnabledId ||
+           id == kCarEqPreampId || carEqBand(id) >= 0;
 }
 
 // Helper to detect bus volume parameters (e.g. "bus0_media_out")
@@ -132,6 +134,8 @@ ndk::ScopedAStatus ModulePrimary::getVendorParameters(
                 value = primary::PrimaryMixer::getFader();
             } else if (id == kCarEqEnabledId) {
                 value = primary::PrimaryMixer::getEqEnabled() ? 1.0f : 0.0f;
+            } else if (id == kCarEqPreampId) {
+                value = primary::PrimaryMixer::getEqPreamp();
             } else {
                 value = primary::PrimaryMixer::getEqBandGain(carEqBand(id));
             }
@@ -182,6 +186,8 @@ ndk::ScopedAStatus ModulePrimary::setVendorParameters(
                 primary::PrimaryMixer::setFader(raw);
             } else if (p.id == kCarEqEnabledId) {
                 primary::PrimaryMixer::setEqEnabled(raw != 0.0f);
+            } else if (p.id == kCarEqPreampId) {
+                primary::PrimaryMixer::setEqPreamp(raw);
             } else {
                 primary::PrimaryMixer::setEqBandGain(carEqBand(p.id), raw);
             }

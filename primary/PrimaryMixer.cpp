@@ -125,15 +125,26 @@ std::string eqBandSettingName(int band) {
     return "eq_band" + std::to_string(band);
 }
 
+// Band layout the stored eq_band<N> values belong to. Layout 1 (no property) was
+// the 5-band EQ at 60/250/1k/4k/12k Hz; its values don't map onto the octave
+// bands, so they are reset once.
+constexpr float kEqLayout = 2.0f;
+
 }  // namespace
 
 void PrimaryMixer::loadCarSettings() {
     mBalance.store(readCarSetting("balance", -1.0f, 1.0f));
     mFader.store(readCarSetting("fader", -1.0f, 1.0f));
     mEqEnabled.store(readCarSetting("eq_enabled", 0.0f, 1.0f) != 0.0f);
+    if (readCarSetting("eq_layout", 0.0f, 100.0f) != kEqLayout) {
+        for (int band = 0; band < kEqBands; ++band) persistCarSetting(eqBandSettingName(band), 0.0f);
+        persistCarSetting("eq_preamp", 0.0f);
+        persistCarSetting("eq_layout", kEqLayout);
+    }
     for (int band = 0; band < kEqBands; ++band) {
         mEqGainDb[band].store(readCarSetting(eqBandSettingName(band), -kEqMaxGainDb, kEqMaxGainDb));
     }
+    mEqPreampDb.store(readCarSetting("eq_preamp", -kEqMaxGainDb, kEqMaxGainDb));
     LOG(INFO) << "Car audio settings: balance=" << mBalance.load() << " fader=" << mFader.load()
               << " eq=" << (mEqEnabled.load() ? "on" : "off");
 }
@@ -192,6 +203,20 @@ void PrimaryMixer::setEqBandGain(int band, float gainDb) {
 float PrimaryMixer::getEqBandGain(int band) {
     if (band < 0 || band >= kEqBands) return 0.0f;
     return getInstance().mEqGainDb[band].load();
+}
+
+// static
+void PrimaryMixer::setEqPreamp(float gainDb) {
+    gainDb = std::clamp(gainDb, -kEqMaxGainDb, kEqMaxGainDb);
+    auto& instance = getInstance();
+    instance.mEqPreampDb.store(gainDb);
+    instance.mEqGeneration.fetch_add(1);
+    persistCarSetting("eq_preamp", gainDb);
+}
+
+// static
+float PrimaryMixer::getEqPreamp() {
+    return getInstance().mEqPreampDb.load();
 }
 
 // static

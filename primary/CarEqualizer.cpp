@@ -26,9 +26,15 @@ namespace aidl::android::hardware::audio::core::primary {
 
 namespace {
 
-// Bandwidth of each peaking band. With bands two octaves apart, Q = 0.9 keeps
-// neighbouring bands overlapping without large bumps between them.
-constexpr float kEqQ = 0.9f;
+// Bandwidth of each peaking band: one octave (Q = sqrt(2)), matching the octave
+// spacing of the bands.
+constexpr float kEqQ = 1.41421356f;
+
+// Points (log-spaced, 20 Hz up to the highest band) at which the response is
+// sampled to find its peak for the clipping headroom.
+constexpr int kPeakSamples = 240;
+// Margin for a true peak that falls between the sampled points.
+constexpr float kPeakMarginDb = 0.1f;
 
 }  // namespace
 
@@ -46,11 +52,8 @@ bool CarEqualizer::update(unsigned int sampleRate, int channels) {
 
     if (!PrimaryMixer::getEqEnabled() || sampleRate == 0 || channels <= 0) return false;
 
-    // Boosts are compensated by lowering the input, so a boosted band can't clip.
-    float maxBoostDb = 0.0f;
     for (int band = 0; band < PrimaryMixer::kEqBands; ++band) {
         const float gainDb = PrimaryMixer::getEqBandGain(band);
-        maxBoostDb = std::max(maxBoostDb, gainDb);
         const float frequency = PrimaryMixer::kEqFrequenciesHz[band];
         // Flat bands and bands at or above Nyquist are left out.
         if (gainDb == 0.0f || frequency >= 0.45f * sampleRate) continue;
@@ -68,11 +71,28 @@ bool CarEqualizer::update(unsigned int sampleRate, int channels) {
         f.a1 = static_cast<float>(-2.0 * cosw0 / a0);
         f.a2 = static_cast<float>((1.0 - alpha / a) / a0);
     }
-    if (mBandCount == 0) return false;
+    const float preampDb = PrimaryMixer::getEqPreamp();
+    if (mBandCount == 0 && preampDb == 0.0f) return false;
 
-    mPreamp = std::pow(10.0f, -maxBoostDb / 20.0f);
+    // Neighbouring bands overlap, so the curve can peak above the largest band
+    // gain. The input is lowered so that preamp + peak stays at or below 0 dB
+    // and the EQ can't clip; a preamp below that headroom is used as is.
+    mActive = true;  // responseDb() needs it
+    mPreamp = 1.0f;
+    float peakDb = -std::numeric_limits<float>::infinity();
+    const float top = std::min(20000.0f, 0.45f * sampleRate);
+    for (int i = 0; i < kPeakSamples; ++i) {
+        const float f = 20.0f * std::pow(top / 20.0f, static_cast<float>(i) / (kPeakSamples - 1));
+        peakDb = std::max(peakDb, responseDb(f));
+    }
+    for (int band = 0; band < PrimaryMixer::kEqBands; ++band) {
+        const float f = PrimaryMixer::kEqFrequenciesHz[band];
+        if (f < top) peakDb = std::max(peakDb, responseDb(f));
+    }
+    peakDb += kPeakMarginDb;
+    const float gainDb = preampDb - std::max(0.0f, preampDb + peakDb);
+    mPreamp = std::pow(10.0f, gainDb / 20.0f);
     mState.assign(static_cast<size_t>(channels) * mBandCount * 2, 0.0f);
-    mActive = true;
     return true;
 }
 
